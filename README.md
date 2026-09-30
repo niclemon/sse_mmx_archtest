@@ -36,15 +36,28 @@ file without replacing earlier results. N leaves the hard drive unchanged.
 On the floppy, Y replaces its preallocated log and N clears its size, including
 any previous saved log. Use a copy of the floppy to preserve earlier results.
 
-The floppy fits about two clean ALL-results passes. Hard-drive capture can use
-up to 64 MiB of BIOS-verified RAM. See [hard-drive saving](docs/STORAGE.md) for
-supported layouts, capacity limits, and the remaining BIOS validation step.
+Use a hard drive for the detailed ALL-results log (about 2.3 MB per pass in the
+measured run). The floppy is suitable for FAIL/SKIP logging. Hard-drive capture
+can use up to 64 MiB of BIOS-verified RAM. See [hard-drive saving](docs/STORAGE.md)
+for supported layouts, capacity limits and validation.
 
 Extract a saved log from the image used by the emulator:
 
 ```sh
 make extract IMAGE=/path/to/run.img
 ```
+
+Each outcome in the saved log starts with `PASS`, `FAIL`, `SKIP` or `EXEC`,
+followed by tab-separated fields describing the test and expected/actual data.
+Export it for an emulator maintainer with:
+
+```sh
+python3 tools/parse_results.py RESULTS.TXT --status FAIL --output failures.jsonl
+python3 tools/parse_results.py RESULTS.TXT --format csv --output results.csv
+python3 tools/coverage_report.py --check-log RESULTS.TXT
+```
+
+See the [result format](docs/RESULT_FORMAT.md) for masks, tolerances and byte order.
 
 ## Documentation
 
@@ -54,6 +67,7 @@ Each guide owns one topic so instructions and explanations stay consistent:
 | --- | --- |
 | [Building and running](docs/BUILD.md) | Dependencies, build targets, Docker, image verification, and log extraction. |
 | [Hard-drive saving](docs/STORAGE.md) | FAT16/FAT32 detection, destination selection, RAM limits and failure handling. |
+| [Result format](docs/RESULT_FORMAT.md) | Status-first records, expected/actual values, JSONL/CSV export and validation. |
 | [Reading the code](docs/READING_THE_CODE.md) | Architecture, source map, test anatomy, bit patterns, assembly, and exception recovery. |
 | [Coverage and limitations](docs/COVERAGE.md) | Case inventory, incomplete checks, and useful additions. |
 | [Adding tests](docs/ADDING_TESTS.md) | Reference rules, exact assembly probes, and validation steps. |

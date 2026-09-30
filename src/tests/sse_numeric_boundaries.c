@@ -187,9 +187,11 @@ static void exact_arithmetic_boundaries(void) {
                     "r"(&cases[row].b), "r"(&out)
                     : "memory");
             uint32_t mx = cpu_get_mxcsr();
-            tf_begin_indexed("exact normal/subnormal transition", rc * 8 + row);
+            tf_begin_indexed(cases[row].multiply ? "MULSS exact normal/subnormal transition"
+                                                  : "ADDSS exact normal/subnormal transition", rc * 8 + row);
             tf_check_u128(&out, &expected);
-            tf_begin_indexed("exact tiny result status", rc * 8 + row);
+            tf_begin_indexed(cases[row].multiply ? "MULSS exact tiny result status"
+                                                  : "ADDSS exact tiny result status", rc * 8 + row);
             tf_check_u32(mx, control | cases[row].flags);
         }
     }
@@ -233,10 +235,14 @@ static void approximate_boundaries(void) {
                 tf_begin_indexed(root ? "RSQRTPS non-power-of-two accuracy"
                                       : "RCPPS non-power-of-two accuracy",
                                  rc * 4 + i);
-                if (reciprocal_in_range(out.lane[i], divisors[i]))
-                    tf_pass();
-                else
-                    tf_fail_text("relative error exceeds 1.5 * 2^-12");
+                static const char *contracts[4] = {
+                    "binary32 near 1/3; relative-error <= 3/8192",
+                    "binary32 near 1/5; relative-error <= 3/8192",
+                    "binary32 near 1/7; relative-error <= 3/8192",
+                    "binary32 near 1/10; relative-error <= 3/8192"
+                };
+                tf_check_property(&out.lane[i], 4,
+                                  reciprocal_in_range(out.lane[i], divisors[i]), contracts[i]);
             }
             tf_begin_indexed(root ? "RSQRTPS preserves MXCSR" : "RCPPS preserves MXCSR", rc);
             tf_check_u32(mx, control);

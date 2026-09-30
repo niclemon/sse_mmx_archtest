@@ -271,15 +271,15 @@ void run_edge_memory(void) {
     uint32_t exp0 = *(const uint32_t *)(const void *)(mem + 0);
     uint32_t exp12 = *(const uint32_t *)(const void *)(mem + 12);
     uint32_t scalar_cross = expect_gp_fs_u32_13();
-    tf_begin("FS oracle selector loaded");
+    tf_begin("MOV FS oracle selector loaded");
     tf_check_u32(sel, 0x28u);
-    tf_begin("FS oracle LSL effective limit");
+    tf_begin("LSL FS oracle effective limit");
     tf_check_u32(lim, 15u);
-    tf_begin("FS oracle base via scalar dword +0");
+    tf_begin("MOV FS base via scalar dword +0");
     tf_check_u32(base0, exp0);
-    tf_begin("FS scalar dword exact-fit +12");
+    tf_begin("MOV FS scalar dword exact-fit +12");
     tf_check_u32(fit12, exp12);
-    tf_begin("FS scalar dword crosses limit +13 -> #GP");
+    tf_begin("MOV FS scalar dword crosses limit +13 -> #GP");
     tf_check_fault(scalar_cross, X86_VEC_GP);
     if (sel == 0x28u && lim == 15u && base0 == exp0 && fit12 == exp12 &&
         scalar_cross == X86_VEC_GP) {

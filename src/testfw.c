@@ -24,11 +24,58 @@ static int memeq(const uint8_t *a, const uint8_t *b, uint32_t n) {
     return 1;
 }
 
-static void log_prefix(const char *status) {
-    log_printf("pass=%08x %s %s", g_current_pass, status, current_name);
-    if (current_detail && *current_detail)
-        log_printf(" [%s]", current_detail);
-    log_puts("\r\n");
+/* Result format 2: one status-first TSV record. Escape text so a case name,
+ * detail or reason cannot create a field or another physical record. */
+static void text_field(const char *key, const char *value) {
+    log_printf("\t%s=", key);
+    for (const unsigned char *p = (const unsigned char *)(value ? value : ""); *p; ++p) {
+        if (*p == '\\') log_puts("\\\\");
+        else if (*p == '\t') log_puts("\\t");
+        else if (*p == '\r') log_puts("\\r");
+        else if (*p == '\n') log_puts("\\n");
+        else if (*p < 32 || *p == 127) log_printf("\\x%02x", *p);
+        else log_printf("%c", *p);
+    }
+}
+
+static int record_begin(const char *status, const char *check, uint32_t count) {
+    g_counts.total += count;
+    if (status[0] == 'P') g_counts.passed += count;
+    else if (status[0] == 'F') g_counts.failed += count;
+    else if (status[0] == 'S') g_counts.skipped += count;
+    else g_counts.exec_only += count;
+    if (status[0] == 'F') {
+        console_printf("FAIL %s", current_name);
+        if (current_detail) console_printf(" [%s]", current_detail);
+        console_printf(" check=%s (values in RESULTS.TXT)\n", check);
+    }
+    if ((status[0] == 'P' || status[0] == 'E') && g_log_mode != LOG_ALL)
+        return 0;
+    log_puts(status);
+    text_field("test", current_name);
+    log_printf("\tpass=%u\tid=%u\tcount=%u", g_current_pass, g_counts.total, count);
+    text_field("group", tf_current_group());
+    text_field("detail", current_detail);
+    text_field("check", check);
+    return 1;
+}
+
+static int result_begin(int ok, const char *check) {
+    return record_begin(ok ? "PASS" : "FAIL", check, 1);
+}
+
+/* Integer/vector values are printed most-significant byte first. This uses
+ * byte reads and works for deliberately unaligned buffers too. */
+static void hex_value(const void *value, uint32_t size, int address_order) {
+    const uint8_t *p = value;
+    log_puts("0x");
+    for (uint32_t i = 0; i < size; ++i)
+        log_printf("%02x", p[address_order ? i : size - 1 - i]);
+}
+
+static void values(const void *actual, const void *expected, uint32_t size, int address_order) {
+    log_puts("\texpected="); hex_value(expected, size, address_order);
+    log_puts("\tactual="); hex_value(actual, size, address_order);
 }
 
 const char *tf_current_name(void) {
@@ -79,154 +126,115 @@ void tf_begin_indexed(const char *name, uint32_t index) {
     tf_set_detail(detail);
 }
 
-/* Check the whole guarded buffer, so a correct payload cannot hide a write
- * just before or after it. Report the first differing byte and its offset. */
+/* Check and log the whole buffer, including guard bytes. Byte-buffer fields
+ * follow increasing addresses, unlike the numeric u64/u128 fields. */
 void tf_check_bytes(const void *actual, const void *expected, uint32_t size) {
     const uint8_t *a = actual, *e = expected;
-    for (uint32_t i = 0; i < size; ++i) {
-        if (a[i] != e[i]) {
-            tf_fail_text("byte buffer mismatch");
-            console_printf("    offset=%u expected=%02x actual=%02x\n", i, e[i], a[i]);
-            log_printf("  offset=%08x expected=%02x actual=%02x\r\n", i, e[i], a[i]);
-            return;
-        }
+    uint32_t first = size;
+    for (uint32_t i = 0; i < size; ++i)
+        if (a[i] != e[i]) { first = i; break; }
+    if (result_begin(first == size, "bytes")) {
+        values(actual, expected, size, 1);
+        log_printf("\tsize=%u", size);
+        if (first != size) log_printf("\tfirst_mismatch=%u", first);
+        log_puts("\r\n");
     }
-    tf_pass();
 }
 
-/* Borrow the string until the next tf_begin(); do not retain a dead stack
- * buffer. The tests normally check/report immediately after setting detail. */
-void tf_set_detail(const char *detail) {
-    current_detail = detail;
-}
+void tf_set_detail(const char *detail) { current_detail = detail; }
 
 void tf_pass(void) {
-    ++g_counts.total;
-    ++g_counts.passed;
-    if (g_log_mode == LOG_ALL)
-        log_prefix("PASS");
+    if (result_begin(1, "predicate"))
+        log_puts("\texpected=true\tactual=true\r\n");
 }
 
-/* EXEC means the instruction returned without an unexpected exception.
- * No data-result or externally visible ordering assertion was checked. */
 void tf_exec(void) {
-    ++g_counts.total;
-    ++g_counts.exec_only;
-    if (g_log_mode == LOG_ALL)
-        log_prefix("EXEC");
+    if (record_begin("EXEC", "execution-only", 1))
+        log_puts("\texpected=not-asserted\tactual=returned\r\n");
 }
 
 void tf_skip(const char *reason) {
-    ++g_counts.total;
-    ++g_counts.skipped;
-    log_prefix("SKIP");
-    if (reason)
-        log_printf("  reason=%s\r\n", reason);
+    if (record_begin("SKIP", "not-evaluated", 1)) {
+        log_puts("\texpected=not-evaluated\tactual=not-executed");
+        text_field("reason", reason);
+        log_puts("\r\n");
+    }
 }
 
-/* Preserve the planned case count when a failed prerequisite suppresses a
- * whole family. One log line represents count unexecuted cases. */
 void tf_skip_many(const char *name, const char *reason, uint32_t count) {
-    if (!count)
-        return;
-    current_name = name ? name : "<none>";
-    current_detail = 0;
-    g_counts.total += count;
-    g_counts.skipped += count;
-    console_printf("  SKIP %u cases: %s", count, current_name);
-    if (reason)
-        console_printf(" (%s)", reason);
-    console_putc('\n');
-    log_printf("pass=%08x SKIPx%u %s\r\n", g_current_pass, count, current_name);
-    if (reason)
-        log_printf("  reason=%s\r\n", reason);
+    if (!count) return;
+    tf_begin(name);
+    console_printf("SKIP %u cases: %s (%s)\n", count, current_name, reason ? reason : "");
+    if (record_begin("SKIP", "not-evaluated", count)) {
+        log_puts("\texpected=not-evaluated\tactual=not-executed");
+        text_field("reason", reason);
+        log_puts("\r\n");
+    }
 }
 
 void tf_fail_text(const char *reason) {
-    ++g_counts.total;
-    ++g_counts.failed;
-    console_printf("  FAIL %s", current_name);
-    if (current_detail)
-        console_printf(" [%s]", current_detail);
-    if (reason)
-        console_printf(": %s", reason);
-    console_putc('\n');
-    log_prefix("FAIL");
-    if (reason)
-        log_printf("  reason=%s\r\n", reason);
+    if (result_begin(0, "predicate")) {
+        log_puts("\texpected=true\tactual=false");
+        text_field("reason", reason);
+        log_puts("\r\n");
+    }
 }
 
 void tf_fail_guest_reg(const char *reg, uint32_t expected, uint32_t actual) {
-    ++g_counts.total;
-    ++g_counts.failed;
-    console_printf("  FAIL %s guest-%s-corruption expected=%08x actual=%08x\n", current_name,
-                   reg ? reg : "GPR", expected, actual);
-    log_prefix("FAIL");
-    log_printf("  guest-register-corruption %s expected=0x%08x actual=0x%08x\r\n",
-               reg ? reg : "GPR", expected, actual);
+    if (result_begin(0, "guest-register")) {
+        values(&actual, &expected, 4, 0);
+        text_field("register", reg ? reg : "GPR");
+        log_puts("\r\n");
+    }
+}
+
+static void check_u32(uint32_t actual, uint32_t expected, uint32_t mask, const char *kind) {
+    if (result_begin((actual & mask) == (expected & mask), kind)) {
+        values(&actual, &expected, 4, 0);
+        log_printf("\tmask=0x%08x\r\n", mask);
+    }
 }
 
 void tf_check_u32(uint32_t actual, uint32_t expected) {
-    if (actual == expected) {
-        tf_pass();
-        return;
-    }
-    ++g_counts.total;
-    ++g_counts.failed;
-    console_printf("  FAIL %s", current_name);
-    if (current_detail)
-        console_printf(" [%s]", current_detail);
-    console_printf(" expected=%08x actual=%08x\n", expected, actual);
-    log_prefix("FAIL");
-    log_printf("  expected=0x%08x actual=0x%08x\r\n", expected, actual);
+    check_u32(actual, expected, 0xffffffffu, "u32");
 }
 
 void tf_check_mask_u32(uint32_t actual, uint32_t expected, uint32_t mask) {
-    tf_check_u32(actual & mask, expected & mask);
+    check_u32(actual, expected, mask, "masked-u32");
 }
 
-/* Compare raw bits, including floating-point NaN payloads and signed zero.
- * Hex diagnostics print the most significant dword first; lane[0] and the
- * lowest-addressed bytes appear at the RIGHT of the printed value. */
-static uint32_t read_le32(const uint8_t *p) {
-    /* Fault diagnostics also receive deliberately unaligned byte buffers. */
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-           ((uint32_t)p[3] << 24);
-}
-
-void tf_check_u64(const void *actual, const void *expected) {
-    const uint8_t *a = actual, *e = expected;
-    if (memeq(a, e, 8)) {
-        tf_pass();
-        return;
+static void check_vector(const void *actual, const void *expected, uint32_t size) {
+    if (result_begin(memeq(actual, expected, size), size == 8 ? "u64" : "u128")) {
+        values(actual, expected, size, 0);
+        log_puts("\r\n");
     }
-    ++g_counts.total;
-    ++g_counts.failed;
-    console_printf("  FAIL %s", current_name);
-    if (current_detail) console_printf(" [%s]", current_detail);
-    console_printf(" expected=%08x%08x actual=%08x%08x\n", read_le32(e + 4), read_le32(e),
-                   read_le32(a + 4), read_le32(a));
-    log_prefix("FAIL");
-    log_printf("  expected=0x%08x%08x actual=0x%08x%08x\r\n", read_le32(e + 4), read_le32(e),
-               read_le32(a + 4), read_le32(a));
 }
 
-void tf_check_u128(const void *actual, const void *expected) {
-    const uint8_t *a = actual, *e = expected;
-    if (memeq(a, e, 16)) {
-        tf_pass();
-        return;
+void tf_check_u64(const void *actual, const void *expected) { check_vector(actual, expected, 8); }
+void tf_check_u128(const void *actual, const void *expected) { check_vector(actual, expected, 16); }
+
+/* A predicate with raw data and a textual contract, for classes/ranges where
+ * a single expected bit pattern would incorrectly tighten the architecture. */
+void tf_check_property(const void *actual, uint32_t size, int ok, const char *expected) {
+    if (result_begin(ok, "property")) {
+        text_field("expected", expected);
+        log_puts("\tactual="); hex_value(actual, size, 0);
+        log_printf("\tsize=%u\r\n", size);
     }
-    ++g_counts.total;
-    ++g_counts.failed;
-    console_printf("  FAIL %s", current_name);
-    if (current_detail) console_printf(" [%s]", current_detail);
-    console_putc('\n');
-    console_printf("    expected=%08x%08x%08x%08x\n", read_le32(e + 12), read_le32(e + 8), read_le32(e + 4), read_le32(e));
-    console_printf("    actual  =%08x%08x%08x%08x\n", read_le32(a + 12), read_le32(a + 8), read_le32(a + 4), read_le32(a));
-    log_prefix("FAIL");
-    log_printf("  expected=0x%08x%08x%08x%08x\r\n", read_le32(e + 12), read_le32(e + 8), read_le32(e + 4), read_le32(e));
-    log_printf("  actual=0x%08x%08x%08x%08x\r\n", read_le32(a + 12), read_le32(a + 8), read_le32(a + 4), read_le32(a));
+}
+
+void tf_check_qnan_vector(const void *actual, const void *expected, uint32_t qnan_mask) {
+    const uint32_t *a = actual, *e = expected;
+    int ok = 1;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (qnan_mask & (1u << i)) {
+            if ((a[i] & 0x7fc00000u) != 0x7fc00000u) ok = 0;
+        } else if (a[i] != e[i]) ok = 0;
+    }
+    if (result_begin(ok, "qnan-lanes")) {
+        values(actual, expected, 16, 0);
+        log_printf("\tqnan_mask=0x%08x\r\n", qnan_mask);
+    }
 }
 
 /* A deliberately restricted RCP/RSQRT oracle, not a general float comparator.
@@ -243,29 +251,24 @@ static int approx_lane(uint32_t a, uint32_t e) {
     return (a - e) <= 3072u;
 }
 
-void tf_check_approx4(const void *actual, const void *expected) {
+static void check_approx(const void *actual, const void *expected, int scalar) {
     const uint32_t *a = actual, *e = expected;
-    for (uint32_t i = 0; i < 4; ++i) {
-        if (!approx_lane(a[i], e[i])) {
-            tf_check_u128(actual, expected);
-            return;
-        }
+    int ok = 1;
+    for (uint32_t i = 0; i < 4; ++i)
+        if ((scalar && i) ? a[i] != e[i] : !approx_lane(a[i], e[i])) ok = 0;
+    if (result_begin(ok, scalar ? "approx-scalar" : "approx4")) {
+        values(actual, expected, 16, 0);
+        log_puts("\tlower_encodings=6144\tupper_encodings=3072\trelative_bound=3/8192\r\n");
     }
-    tf_pass();
 }
 
-void tf_check_approx_scalar(const void *actual, const void *expected) {
-    const uint32_t *a = actual, *e = expected;
-    if (approx_lane(a[0], e[0]) && a[1] == e[1] && a[2] == e[2] && a[3] == e[3])
-        tf_pass();
-    else
-        tf_check_u128(actual, expected);
-}
+void tf_check_approx4(const void *actual, const void *expected) { check_approx(actual, expected, 0); }
+void tf_check_approx_scalar(const void *actual, const void *expected) { check_approx(actual, expected, 1); }
 
-/* Check the exception vector only. The handler records EIP/error code for
- * diagnostics, but this function does not validate either of them. */
+/* 0xffffffff means no exception was delivered. EIP/error-code checks are
+ * separate outcomes, not implied by a matching vector. */
 void tf_check_fault(uint32_t actual_vector, uint32_t expected_vector) {
-    tf_check_u32(actual_vector, expected_vector);
+    check_u32(actual_vector, expected_vector, 0xffffffffu, "fault-vector");
 }
 
 void tf_print_summary(void) {
@@ -273,7 +276,7 @@ void tf_print_summary(void) {
     console_printf("\nSUMMARY pass=%u total=%u pass=%u fail=%u exec=%u skip=%u\n", g_current_pass,
                    g_counts.total, g_counts.passed, g_counts.failed, g_counts.exec_only,
                    g_counts.skipped);
-    log_printf("\r\nSUMMARY pass=%08x total=%08x pass=%08x fail=%08x exec=%08x skip=%08x\r\n",
+    log_printf("\r\nSUMMARY iteration=%08x total=%08x pass=%08x fail=%08x exec=%08x skip=%08x\r\n",
                g_current_pass, g_counts.total, g_counts.passed, g_counts.failed, g_counts.exec_only,
                g_counts.skipped);
 }

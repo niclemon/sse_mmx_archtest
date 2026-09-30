@@ -8,6 +8,7 @@ the complete guest count, including prerequisite and unsupported-feature skips.
 import argparse
 from pathlib import Path
 import re
+from parse_results import parse_log
 
 # Name, planned outcomes per pass, owning source, safe for the hosted runner.
 ROWS = [
@@ -47,6 +48,19 @@ def check_log(text):
         raise ValueError(f"observed {total} cases; expected {CASES_PER_PASS} * {passes}")
     if total != passed + failed + executed + skipped:
         raise ValueError("outcome counters do not add up to total")
+    if 'FORMAT result-tsv=2 ' in text:
+        all_results = 'log-mode=ALL-results' in text
+        observed = dict.fromkeys(('PASS', 'FAIL', 'EXEC', 'SKIP'), 0)
+        for record in parse_log(text):
+            if record['pass'] > passes or record['id'] > total:
+                raise ValueError('record pass/ID exceeds final counters')
+            observed[record['status']] += record['count']
+            if all_results and record['id'] != sum(observed.values()):
+                raise ValueError('missing or miscounted outcome records')
+        expected = dict(zip(('PASS', 'FAIL', 'EXEC', 'SKIP'),
+                            (passed if all_results else 0, failed, executed if all_results else 0, skipped)))
+        if observed != expected:
+            raise ValueError(f'record counts {observed} differ from final counters {expected}')
     return passes, total
 
 

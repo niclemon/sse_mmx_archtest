@@ -7,6 +7,7 @@ The final ELF keeps relocations so verification checks actual call destinations.
 import argparse
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 
 from elf_calls import normalize_coff_calls
@@ -16,8 +17,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--msys2', type=Path, default=Path('C:/msys64'))
     parser.add_argument('--output', type=Path, default=Path('dist/sse_mmx_archtest.img'))
+    cleanup = parser.add_mutually_exclusive_group()
+    cleanup.add_argument('--clean', action='store_true', help='remove build artifacts only')
+    cleanup.add_argument('--distclean', action='store_true', help='also remove dist and RESULTS.TXT')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    if args.clean or args.distclean:
+        names = ('build', 'dist', 'RESULTS.TXT') if args.distclean else ('build',)
+        targets = [root / name for name in names]
+        # Verify every resolved target before removing anything. Never follow
+        # an artifact directory that was redirected outside this checkout.
+        for target in targets:
+            if target.resolve().parent != root or target.is_symlink():
+                parser.error(f'refusing cleanup outside the project: {target}')
+        for target in targets:
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+        return
     clang = args.msys2 / 'clang64/bin/clang.exe'
     linker = args.msys2 / 'clang64/bin/ld.lld.exe'
     assembler = args.msys2 / 'mingw64/bin/as.exe'

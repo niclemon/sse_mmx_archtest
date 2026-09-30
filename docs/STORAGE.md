@@ -8,8 +8,8 @@ optional storage for the log; it does not need to contain a bootable OS.
 After selecting the pass count and log detail, choose:
 
 1. **Floppy.** The existing preallocated `RESULTS.TXT` has 1,261,056 bytes of
-   space. About two clean passes fit with ALL logging. Failure diagnostics can
-   make the log larger; FAIL/SKIP logging usually fits many more passes.
+   space. A full pass with the detailed ALL log exceeds that capacity; use
+   FAIL/SKIP logging here or select a hard drive for all comparison values.
 2. **Hard drive.** Select one of the detected FAT16/FAT32 volumes. Each entry
    identifies its BIOS disk number, partition number, filesystem, size and label.
    Partition 0 means FAT directly on the disk, without a partition table.
@@ -20,8 +20,11 @@ contiguous usable region reported by BIOS E820 starting at physical 1 MiB.
 Available space on the selected volume can lower the capture limit further.
 Reserved ranges and holes shorten the RAM region. An unusable or incomplete memory
 map stops the run before capture can write into unverified RAM. With a full
-64 MiB buffer, approximately 117 clean ALL-results passes fit at the current
-suite size. Free disk space must also accommodate the resulting file.
+64 MiB buffer, approximately 29 ALL-results passes fit at the measured size
+of about 2.3 MB per pass. This varies with outcomes and skipped families; the
+menu uses a conservative 4 MB/pass estimate for its capacity warning. Free
+disk space must also accommodate the resulting file. Disk space does not
+remove the RAM capture limit: active tests still perform no disk I/O.
 
 At the end, **Y** saves the captured log. A hard-drive save creates `RESULTS.TXT`
 when that name is available, otherwise `RES00001.TXT`, `RES00002.TXT`, and so on.
@@ -83,10 +86,14 @@ and directories, malformed layouts, dirty/divergent FATs, and injected data and
 metadata write failures. Separate tests exercise E820 bounds, reserved holes,
 destination routing, deferred writes and truncation summaries.
 
-These host tests do not execute BIOS interrupts. The new EDD/E820 assembly still
-requires a boot smoke test on the intended machine or emulator. Use a disposable
-FAT disk image for that first run, choose hard-drive saving, and inspect both the
-new log and a pre-existing file afterward. `tools/extract_results.py` remains a
+These host tests do not execute BIOS interrupts. A QEMU TCG/SeaBIOS boot run
+with a disposable partitioned FAT16 disk completed two passes and saved a
+4,513,282-byte structured log as `RES00001.TXT`. The existing `RESULTS.TXT`
+retained its original bytes, both FAT copies matched, file chains stayed in
+bounds, and the parsed records matched all 21,396 outcomes. This exercises
+EDD/E820 through the guest BIOS; PCBox and physical-machine validation remain
+separate. Use a disposable FAT disk image for that first run on another target.
+`tools/extract_results.py` remains a
 reader for this project's FAT12 floppy; open HDD results through a FAT-capable
 OS or image tool.
 

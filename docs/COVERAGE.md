@@ -48,8 +48,10 @@ conversion indices use `(rounding_mode << 8) | (row << 1) | memory`. Memory is
 zero for a register source and one for a memory source. Other sweeps use a
 register number, byte mask, bit number or offset, as described next to the loop.
 
-`tf_check_bytes()` reports the first mismatching byte's offset and values.
-It checks the entire guarded buffer, not just the intended payload.
+`tf_check_bytes()` logs the full expected/actual buffers and, on failure, the
+first differing byte's offset. It checks the entire guarded buffer, not just
+the intended payload. All comparisons record their values in ALL mode; see
+the [result format](RESULT_FORMAT.md) for byte order, masks and tolerances.
 
 ## What is still missing
 

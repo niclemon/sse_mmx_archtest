@@ -28,6 +28,11 @@ void tf_check_approx4(const void *actual, const void *expected);
 void tf_check_approx_scalar(const void *actual, const void *expected);
 void tf_check_mask_u32(uint32_t actual, uint32_t expected, uint32_t mask);
 void tf_check_fault(uint32_t actual_vector, uint32_t expected_vector);
+/* Log raw observed data with a class/range contract instead of inventing an
+ * exact expected bit pattern. Numeric byte order is the same as u64/u128. */
+void tf_check_property(const void *actual, uint32_t size, int ok, const char *expected);
+/* Marked lanes require a quiet NaN; their expected payload bits are ignored. */
+void tf_check_qnan_vector(const void *actual, const void *expected, uint32_t qnan_mask);
 void tf_reset_counts(void);
 void tf_print_summary(void);
 const char *tf_current_name(void);

@@ -26,14 +26,37 @@ harness code does not disturb the state under test. Keep those flags enabled.
 With MSYS2 Clang/LLD in `clang64/bin` and GNU binutils in `mingw64/bin`:
 
 ```powershell
+mingw32-make.exe --jobs=30 all
+# Or invoke the same checked builder directly:
 C:/msys64/clang64/bin/python.exe tools/build_windows.py
 ```
+
+On native Windows (`OS=Windows_NT`), the Makefile defaults to the real Python
+at `C:/msys64/clang64/bin/python.exe` and routes `all`, `image` and `verify`
+through the native builder. This avoids Windows' Microsoft Store `python3`
+execution alias and prevents MinGW's PE objects from entering the ELF link.
+Each Windows build recompiles all objects; parallel target aliases share a
+single build invocation. Linux/WSL retain the normal incremental GNU rules.
+
+CLion's Makefile `all` target uses this same route; selecting a Python
+interpreter elsewhere in the IDE does not change the Makefile's `PYTHON`
+variable. For a different installation, pass Make arguments such as
+`MSYS2=D:/msys64` or `PYTHON=C:/path/to/python.exe` (an executable path, without
+extra interpreter arguments). `HOSTCC` defaults to MSYS2 Clang on Windows.
+Use `OUTPUT=dist/another-name.img` to build away from an emulator-mounted image.
+The Windows `clean`/`distclean` targets use the Python builder's cleanup modes,
+so they do not require Unix `rm` on PATH.
 
 Use `--msys2 D:/msys64` for a different installation root. The script rebuilds
 all objects, creates `dist/sse_mmx_archtest.img`, and runs image and regression
 checks. C targets `i386-none-elf`; GNU `as --32` handles the GNU assembly syntax.
 Use `--output dist/sse_mmx_archtest-audited.img` to build a separate image when
 an emulator has the default image mounted. Mount the new output to test it.
+
+Result-format changes can be checked with `make verify-framework HOSTCC=cc`,
+or `python tools/test_framework.py --cc C:/msys64/clang64/bin/clang.exe` on Windows.
+This exercises the actual C formatter and Python parser, including masks,
+tolerances, text escaping, counted skips and filtering.
 
 Do not convert MinGW assembly objects with plain `objcopy -O elf32-i386` and
 link them directly. COFF relative calls use a different displacement origin

@@ -22,7 +22,7 @@ static int choose_log_target(void) {
     unsigned count = hd_scan();
     for (;;) {
         console_puts("Save destination:\n"
-                     "  [1] Floppy - about 2 clean ALL-results passes; failures use more space\n");
+                     "  [1] Floppy - use FAIL/SKIP logging; detailed ALL logs need a hard drive\n");
         if (count) console_puts("  [2] Hard drive\n");
         else console_puts("  No supported FAT16/FAT32 hard-drive volume found.\n");
         char choice = input_read_choice(count ? "12" : "1");
@@ -131,7 +131,7 @@ void kernel_main(void) {
 
     int hard_drive = choose_log_target();
     console_printf("Log capture capacity: %u bytes (512 bytes reserved for final totals).\n", log_capacity());
-    if (g_log_mode == LOG_ALL && g_configured_passes > (log_capacity() - 512u) / 572000u)
+    if (g_log_mode == LOG_ALL && g_configured_passes > (log_capacity() - 512u) / 4000000u)
         console_puts("WARNING: the requested ALL-results log is likely to exceed capture capacity.\n");
 
     log_prepare(g_configured_passes, g_log_mode);

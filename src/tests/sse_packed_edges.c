@@ -36,12 +36,6 @@ PACKED_UN_FN(p_sqrtps, "sqrtps")
 PACKED_UN_FN(p_rcpps, "rcpps")
 PACKED_UN_FN(p_rsqrtps, "rsqrtps")
 
-static int is_nan(uint32_t x) {
-    return (x & 0x7f800000u) == 0x7f800000u && (x & 0x007fffffu) != 0;
-}
-static int is_qnan(uint32_t x) {
-    return is_nan(x) && (x & 0x00400000u) != 0;
-}
 static void reset(void) {
     cpu_set_mxcsr(MXCSR_DEFAULT);
 }
@@ -52,18 +46,7 @@ static void cmp_lane_class(const char *n, const u128 *a, const u128 *e, uint32_t
                            uint32_t required_flags) {
     tf_begin(n);
     uint32_t mx = cpu_get_mxcsr();
-    uint32_t ok = 1;
-    for (unsigned i = 0; i < 4; i++) {
-        if (nan_mask & (1u << i)) {
-            if (!is_qnan(a->lane[i]))
-                ok = 0;
-        } else if (a->lane[i] != e->lane[i])
-            ok = 0;
-    }
-    if (ok)
-        tf_pass();
-    else
-        tf_fail_text("packed lane value or quiet-NaN class mismatch");
+    tf_check_qnan_vector(a, e, nan_mask);
     tf_begin(n);
     tf_set_detail("exact MXCSR control/status");
     tf_check_u32(mx, MXCSR_DEFAULT | required_flags);
@@ -137,10 +120,8 @@ void run_edge_sse_packed(void) {
     p_sqrtps(&a, &o);
     uint32_t sqrtps_mx = cpu_get_mxcsr();
     tf_begin("SQRTPS negative/-0/+inf/exact lane results");
-    if (is_qnan(o.lane[0]) && o.lane[1] == NZ && o.lane[2] == PINF && o.lane[3] == 0x40000000u)
-        tf_pass();
-    else
-        tf_fail_text("lane0 must be QNaN; lanes1..3 must be -0,+inf,2.0");
+    const u128 sqrt_expected = {{0x7fc00000u, NZ, PINF, 0x40000000u}};
+    tf_check_qnan_vector(&o, &sqrt_expected, 1u);
     tf_begin("SQRTPS negative lane sets MXCSR.IE");
     tf_check_mask_u32(sqrtps_mx, MXCSR_IE, MXCSR_IE);
 

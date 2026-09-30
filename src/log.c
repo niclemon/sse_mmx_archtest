@@ -72,6 +72,7 @@ void log_prepare(uint32_t passes, uint32_t mode) {
     finishing = 0;
     /* No disk access here.  Logging during tests is RAM-only. */
     log_puts(ARCHTEST_NAME "\r\n");
+    log_puts("FORMAT result-tsv=2 escaping=backslash numeric-order=msb-first bytes-order=address\r\n");
     log_printf("configured-passes=%u log-mode=%s\r\n", passes,
                mode == LOG_ALL ? "ALL-results" : "FAIL-only");
 }

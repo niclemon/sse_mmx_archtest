@@ -206,10 +206,10 @@ void run_edge_sse_fp(void) {
         const u128 a = {{ONE, 1, 2, 3}};
         u128 o;
         op_divss(&a, &PZ, &o);
-        if (o.lane[0] == PINF && (cpu_get_mxcsr() & MXCSR_ZE))
-            tf_pass();
-        else
-            tf_fail_text("expected +inf and MXCSR.ZE");
+        uint32_t observed[2] = {o.lane[0], cpu_get_mxcsr()};
+        tf_check_property(observed, sizeof(observed),
+                          observed[0] == PINF && (observed[1] & MXCSR_ZE),
+                          "low32=+inf(0x7f800000); high32=MXCSR with ZE set (other bits ignored)");
     }
 
     {
@@ -219,87 +219,54 @@ void run_edge_sse_fp(void) {
         op_sqrtss(&a, &NEGONE, &o);
         uint32_t sqrt_neg_mx = cpu_get_mxcsr();
         tf_begin("SQRTSS -1 invalid result class");
-        if (f_is_qnan(o.lane[0]))
-            tf_pass();
-        else
-            tf_fail_text("masked invalid sqrt(-1) must produce a quiet NaN");
+        tf_check_property(&o.lane[0], 4, f_is_qnan(o.lane[0]), "quiet-NaN (sign/payload unspecified)");
         tf_begin("SQRTSS -1 invalid MXCSR.IE");
         tf_check_mask_u32(sqrt_neg_mx, MXCSR_IE, MXCSR_IE);
         tf_begin("SQRTSS -1 preserves upper lanes");
-        if (o.lane[1] == a.lane[1] && o.lane[2] == a.lane[2] && o.lane[3] == a.lane[3])
-            tf_pass();
-        else
-            tf_fail_text("scalar SQRTSS modified an upper lane");
+        tf_check_bytes(&o.lane[1], &a.lane[1], 12);
         tf_begin("SQRTSS -0 preserves sign");
         reset_mx();
         op_sqrtss(&a, &NZ, &o);
-        if (o.lane[0] == NZ)
-            tf_pass();
-        else
-            tf_fail_text("sqrt(-0) must be -0");
+        tf_check_u32(o.lane[0], NZ);
         tf_begin("SQRTSS +inf");
         reset_mx();
         op_sqrtss(&a, &PINF, &o);
-        if (o.lane[0] == PINF)
-            tf_pass();
-        else
-            tf_fail_text("sqrt(+inf)");
+        tf_check_u32(o.lane[0], PINF);
         tf_begin("RCPSS +0 -> +inf");
         reset_mx();
         op_rcpss(&a, &PZ, &o);
-        if (o.lane[0] == PINF)
-            tf_pass();
-        else
-            tf_fail_text("rcp(+0)");
+        tf_check_u32(o.lane[0], PINF);
         tf_begin("RCPSS -0 -> -inf");
         reset_mx();
         op_rcpss(&a, &NZ, &o);
-        if (o.lane[0] == NINF)
-            tf_pass();
-        else
-            tf_fail_text("rcp(-0)");
+        tf_check_u32(o.lane[0], NINF);
         tf_begin("RCPSS +inf -> +0");
         reset_mx();
         op_rcpss(&a, &PINF, &o);
-        if (o.lane[0] == PZ)
-            tf_pass();
-        else
-            tf_fail_text("rcp(+inf)");
+        tf_check_u32(o.lane[0], PZ);
         tf_begin("RCPSS -inf -> -0");
         reset_mx();
         op_rcpss(&a, &NINF, &o);
-        if (o.lane[0] == NZ)
-            tf_pass();
-        else
-            tf_fail_text("rcp(-inf)");
+        tf_check_u32(o.lane[0], NZ);
         tf_begin("RSQRTSS +0 -> +inf");
         reset_mx();
         op_rsqrtss(&a, &PZ, &o);
-        if (o.lane[0] == PINF)
-            tf_pass();
-        else
-            tf_fail_text("rsqrt(+0)");
+        tf_check_u32(o.lane[0], PINF);
         tf_begin("RSQRTSS -0 -> -inf");
         reset_mx();
         op_rsqrtss(&a, &NZ, &o);
-        if (o.lane[0] == NINF)
-            tf_pass();
-        else
-            tf_fail_text("rsqrt(-0)");
+        tf_check_u32(o.lane[0], NINF);
         tf_begin("RSQRTSS +inf -> +0");
         reset_mx();
         op_rsqrtss(&a, &PINF, &o);
-        if (o.lane[0] == PZ)
-            tf_pass();
-        else
-            tf_fail_text("rsqrt(+inf)");
+        tf_check_u32(o.lane[0], PZ);
         tf_begin("RSQRTSS negative finite -> QNaN without FP exception");
         reset_mx();
         op_rsqrtss(&a, &NEGONE, &o);
-        if (f_is_qnan(o.lane[0]) && ((cpu_get_mxcsr() & 0x3fu) == 0))
-            tf_pass();
-        else
-            tf_fail_text("rsqrt(negative) class/exception behavior");
+        uint32_t observed[2] = {o.lane[0], cpu_get_mxcsr()};
+        tf_check_property(observed, sizeof(observed),
+                          f_is_qnan(observed[0]) && (observed[1] & 0x3fu) == 0,
+                          "low32=quiet-NaN; high32=MXCSR with bits0..5 clear (other bits ignored)");
     }
 
     check_compare_nan("COMISS QNaN signals invalid", 0, QNaN, 1);

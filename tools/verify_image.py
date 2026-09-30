@@ -143,7 +143,7 @@ def main():
             errs.append('SQRTPS oracle is not split into lane-result and status checks')
         if 'imm=0x00 EQ' not in packed_src or 'imm=0x07 ORD' not in packed_src or 'CMPPS QNaN predicate result' not in packed_src:
             errs.append('CMPPS NaN predicate diagnostics are missing imm8 labels/result checks')
-        if 'FS oracle LSL effective limit' not in mem_src or 'FS scalar dword crosses limit +13 -> #GP' not in mem_src:
+        if 'LSL FS oracle effective limit' not in mem_src or 'MOV FS scalar dword crosses limit +13 -> #GP' not in mem_src:
             errs.append('FS segment-limit prerequisite oracle is missing')
         if 'MOVUPS segment-limit exact-fit/cross checks' not in mem_src or 'FS selector/base/limit scalar prerequisite failed' not in mem_src:
             errs.append('MOVUPS segment-limit checks are not quarantined behind scalar FS oracle')

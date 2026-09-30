@@ -229,39 +229,29 @@ static int mxcsr_health_probe(void) {
     int ok = 1;
     uint32_t down, up, mx, v;
 
-    tf_begin("MXCSR prerequisite: guest RC controls SSE execution");
+    tf_begin("CVTSS2SI MXCSR prerequisite: guest RC controls SSE execution");
     set_rc(MXCSR_RC_DOWN);
     down = cvtss2si(0x40600000u); /* +3.5 -> 3 */
     set_rc(MXCSR_RC_UP);
     up = cvtss2si(0x40600000u); /* +3.5 -> 4 */
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    if (down == 3u && up == 4u)
-        tf_pass();
-    else {
-        tf_fail_text("guest MXCSR.RC is not being applied to SSE execution");
-        ok = 0;
-    }
+    uint32_t observed_rc[2] = {down, up}, expected_rc[2] = {3, 4};
+    tf_set_detail("low32=round-down; high32=round-up; input=0x40600000 (+3.5)");
+    tf_check_u64(observed_rc, expected_rc);
+    if (down != 3u || up != 4u) ok = 0;
 
-    tf_begin("MXCSR prerequisite: guest sticky status is updated");
+    tf_begin("DIVSS MXCSR prerequisite: guest sticky status is updated");
     cpu_set_mxcsr(MXCSR_DEFAULT);
     (void)divss_bits(0x3f800000u, 0x40400000u); /* 1/3 => precision */
     mx = cpu_get_mxcsr();
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    if (mx & MXCSR_PE)
-        tf_pass();
-    else {
-        tf_fail_text("guest MXCSR status flags are not updated by SSE execution");
-        ok = 0;
-    }
+    tf_check_mask_u32(mx, MXCSR_PE, MXCSR_PE);
+    if (!(mx & MXCSR_PE)) ok = 0;
 
-    tf_begin("MXCSR prerequisite: guest exception mask controls #XM");
+    tf_begin("SQRTSS MXCSR prerequisite: guest exception mask controls #XM");
     v = xm_invalid();
-    if (v == X86_VEC_XM)
-        tf_pass();
-    else {
-        tf_check_fault(v, X86_VEC_XM);
-        ok = 0;
-    }
+    tf_check_fault(v, X86_VEC_XM);
+    if (v != X86_VEC_XM) ok = 0;
 
     cpu_set_mxcsr(MXCSR_DEFAULT);
     return ok;
@@ -325,13 +315,13 @@ void run_edge_mxcsr(void) {
     static const uint32_t neg_exp[4] = {0xfffffffcu, 0xfffffffcu, 0xfffffffdu, 0xfffffffdu};
     for (unsigned i = 0; i < 4; i++) {
         set_rc(rc[i]);
-        tf_begin("CVTSS2SI +3.5 by MXCSR.RC");
+        tf_begin_indexed("CVTSS2SI +3.5 by MXCSR.RC", i);
         tf_check_u32(cvtss2si(0x40600000u), pos_exp[i]);
         set_rc(rc[i]);
-        tf_begin("CVTSS2SI -3.5 by MXCSR.RC");
+        tf_begin_indexed("CVTSS2SI -3.5 by MXCSR.RC", i);
         tf_check_u32(cvtss2si(0xc0600000u), neg_exp[i]);
         set_rc(rc[i]);
-        tf_begin("CVTTSS2SI ignores MXCSR.RC");
+        tf_begin_indexed("CVTTSS2SI ignores MXCSR.RC", i);
         tf_check_u32(cvttss2si(0x4079999au), 3u);
     }
 
@@ -345,32 +335,32 @@ void run_edge_mxcsr(void) {
     for (unsigned i = 0; i < 4; i++) {
         uint32_t pair[2];
         set_rc(rc[i]);
-        tf_begin("CVTSI2SS +16777217 by MXCSR.RC");
+        tf_begin_indexed("CVTSI2SS +16777217 by MXCSR.RC", i);
         tf_check_u32(cvtsi2ss_bits(16777217), int_pos_f[i]);
         set_rc(rc[i]);
-        tf_begin("CVTSI2SS -16777217 by MXCSR.RC");
+        tf_begin_indexed("CVTSI2SS -16777217 by MXCSR.RC", i);
         tf_check_u32(cvtsi2ss_bits(-16777217), int_neg_f[i]);
         set_rc(rc[i]);
         cvtpi2ps_pair(16777217, -16777217, pair);
-        tf_begin("CVTPI2PS +/-16777217 by MXCSR.RC");
-        if (pair[0] == int_pos_f[i] && pair[1] == int_neg_f[i])
-            tf_pass();
-        else
-            tf_fail_text("packed integer->float rounding mismatch");
+        tf_begin_indexed("CVTPI2PS +/-16777217 by MXCSR.RC", i);
+        {
+            const uint32_t expected[2] = {int_pos_f[i], int_neg_f[i]};
+            tf_check_u64(pair, expected);
+        }
         set_rc(rc[i]);
         cvtps2pi_pair(0x40600000u, 0xc0600000u, pair, 0);
-        tf_begin("CVTPS2PI +/-3.5 by MXCSR.RC");
-        if (pair[0] == p0[i] && pair[1] == p1[i])
-            tf_pass();
-        else
-            tf_fail_text("packed float->integer rounding mismatch");
+        tf_begin_indexed("CVTPS2PI +/-3.5 by MXCSR.RC", i);
+        {
+            const uint32_t expected[2] = {p0[i], p1[i]};
+            tf_check_u64(pair, expected);
+        }
         set_rc(rc[i]);
         cvtps2pi_pair(0x40600000u, 0xc0600000u, pair, 1);
-        tf_begin("CVTTPS2PI ignores MXCSR.RC");
-        if (pair[0] == 3u && pair[1] == 0xfffffffdu)
-            tf_pass();
-        else
-            tf_fail_text("packed truncating conversion obeyed RC unexpectedly");
+        tf_begin_indexed("CVTTPS2PI ignores MXCSR.RC", i);
+        {
+            const uint32_t expected[2] = {3u, 0xfffffffdu};
+            tf_check_u64(pair, expected);
+        }
     }
 
     /* 0x33800000 is 2^-24: half the spacing above +1.0. The negative test
@@ -379,48 +369,48 @@ void run_edge_mxcsr(void) {
     static const uint32_t add_neg_exp[4] = {0xbf800000u, 0xbf800001u, 0xbf800000u, 0xbf800000u};
     for (unsigned i = 0; i < 4; i++) {
         set_rc(rc[i]);
-        tf_begin("ADDSS +half-ULP rounding");
+        tf_begin_indexed("ADDSS +half-ULP rounding", i);
         tf_check_u32(addss_bits(0x3f800000u, 0x33800000u), add_pos_exp[i]);
         set_rc(rc[i]);
-        tf_begin("ADDSS -half-ULP rounding");
+        tf_begin_indexed("ADDSS -half-ULP rounding", i);
         tf_check_u32(addss_bits(0xbf800000u, 0xb3800000u), add_neg_exp[i]);
     }
 
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    tf_begin("MXCSR precision sticky flag");
+    tf_begin("DIVSS MXCSR precision sticky flag");
     (void)divss_bits(0x3f800000u, 0x40400000u);
     tf_check_mask_u32(cpu_get_mxcsr(), MXCSR_PE, MXCSR_PE);
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    tf_begin("MXCSR overflow+precision flags");
+    tf_begin("MULSS MXCSR overflow+precision flags");
     tf_check_u32(mulss_bits(0x7f7fffffu, 0x40000000u), 0x7f800000u);
-    tf_begin("MXCSR overflow flags");
+    tf_begin("MULSS MXCSR overflow flags");
     tf_check_mask_u32(cpu_get_mxcsr(), MXCSR_OE | MXCSR_PE, MXCSR_OE | MXCSR_PE);
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    tf_begin("MXCSR underflow+precision flags");
+    tf_begin("MULSS MXCSR underflow+precision flags");
     tf_check_u32(mulss_bits(0x00800000u, 0x00800000u), 0u);
-    tf_begin("MXCSR underflow flags");
+    tf_begin("MULSS MXCSR underflow flags");
     tf_check_mask_u32(cpu_get_mxcsr(), MXCSR_UE | MXCSR_PE, MXCSR_UE | MXCSR_PE);
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    tf_begin("MXCSR denormal-operand flag");
+    tf_begin("ADDSS MXCSR denormal-operand flag");
     (void)addss_bits(0x00000001u, 0x3f800000u);
     tf_check_mask_u32(cpu_get_mxcsr(), MXCSR_DE, MXCSR_DE);
     cpu_set_mxcsr(MXCSR_DEFAULT);
-    tf_begin("MXCSR flags clear on LDMXCSR");
+    tf_begin("LDMXCSR clears flags after DIVSS");
     (void)divss_bits(0x3f800000u, 0);
     cpu_set_mxcsr(MXCSR_DEFAULT);
     tf_check_mask_u32(cpu_get_mxcsr(), 0, 0x3fu);
 
-    tf_begin("unmasked invalid -> #XM");
+    tf_begin("SQRTSS unmasked invalid -> #XM");
     tf_check_fault(xm_invalid(), X86_VEC_XM);
-    tf_begin("unmasked divide-zero -> #XM");
+    tf_begin("DIVSS unmasked divide-zero -> #XM");
     tf_check_fault(xm_divzero(), X86_VEC_XM);
-    tf_begin("unmasked overflow -> #XM");
+    tf_begin("MULSS unmasked overflow -> #XM");
     tf_check_fault(xm_overflow(), X86_VEC_XM);
-    tf_begin("unmasked underflow -> #XM");
+    tf_begin("MULSS unmasked underflow -> #XM");
     tf_check_fault(xm_underflow(), X86_VEC_XM);
-    tf_begin("unmasked precision -> #XM");
+    tf_begin("DIVSS unmasked precision -> #XM");
     tf_check_fault(xm_precision(), X86_VEC_XM);
-    tf_begin("unmasked denormal operand -> #XM");
+    tf_begin("ADDSS unmasked denormal operand -> #XM");
     tf_check_fault(xm_denormal(), X86_VEC_XM);
 
     run_independent_mxcsr_checks();
@@ -431,19 +421,16 @@ void run_edge_mxcsr(void) {
      * extension, so its absence on Pentium III is a SKIP, not a failure. */
     if (mask & MXCSR_FZ) {
         cpu_set_mxcsr(MXCSR_DEFAULT | MXCSR_FZ);
-        tf_begin("MXCSR.FZ flushes underflow result");
+        tf_begin("MULSS MXCSR.FZ flushes underflow result");
         uint32_t r = mulss_bits(0x00800000u, 0x3e99999au);
-        if ((r & 0x7fffffffu) == 0)
-            tf_pass();
-        else
-            tf_fail_text("FZ result was not zero");
+        tf_check_mask_u32(r, 0, 0x7fffffffu);
     } else {
         tf_begin("MXCSR.FZ support");
         tf_skip("MXCSR_MASK says FZ unsupported");
     }
     if (mask & MXCSR_DAZ) {
         cpu_set_mxcsr(MXCSR_DEFAULT | MXCSR_DAZ);
-        tf_begin("MXCSR.DAZ treats denormal input as zero");
+        tf_begin("ADDSS MXCSR.DAZ treats denormal input as zero");
         tf_check_u32(addss_bits(0x00000001u, 0x00000001u), 0u);
     } else {
         tf_begin("MXCSR.DAZ support");
