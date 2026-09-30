@@ -179,6 +179,7 @@ bios_rw_sector:
     # PUSHAD saves 32 bytes. The return address is now [esp+32], so argument
     # 1 is [esp+36]. Result is kept separately because POPAD restores EAX.
     pushad
+    mov BYTE PTR [bios_service], 0
 
     mov eax, DWORD PTR [esp + 36]  # write
     test eax, eax
@@ -210,6 +211,43 @@ bios_rw_sector:
     mov WORD PTR [bios_buf_off], dx
     shr eax, 4
     mov WORD PTR [bios_buf_seg], ax
+
+    jmp bios_enter
+
+# Packet I/O uses the same mode switch and bounce buffer as floppy I/O.
+# operation: 0=query EDD, 1=read, 2=write. The disk address packet always
+# describes one sector and is rebuilt for every attempt (BIOS may alter it).
+.global bios_edd_command
+bios_edd_command:
+    pushad
+    mov eax, DWORD PTR [esp + 40]
+    mov BYTE PTR [bios_drive_param], al
+    mov eax, DWORD PTR [esp + 36]
+    mov BYTE PTR [bios_service], 1
+    test eax, eax
+    jz bios_enter
+    mov BYTE PTR [bios_service], 2
+    add al, 0x41
+    mov BYTE PTR [bios_ah], al
+    mov DWORD PTR [bios_dap], 0x00010010
+    mov eax, DWORD PTR [esp + 44]
+    mov DWORD PTR [bios_dap + 8], eax
+    mov DWORD PTR [bios_dap + 12], 0
+    mov eax, DWORD PTR [esp + 48]
+    mov edx, eax
+    and edx, 15
+    mov WORD PTR [bios_dap + 4], dx
+    shr eax, 4
+    mov WORD PTR [bios_dap + 6], ax
+    jmp bios_enter
+
+.global bios_get_memory_map
+bios_get_memory_map:
+    pushad
+    mov BYTE PTR [bios_service], 3
+    mov DWORD PTR [bios_memory_count], 0
+
+bios_enter:
 
     mov DWORD PTR [bios_saved_esp], esp
     sidt [bios_saved_idtr]
@@ -258,6 +296,15 @@ rm_bios_entry:
     mov sp, 0xf000
 
     addr32 lidt [real_mode_idtr]
+    addr32 mov DWORD PTR [bios_stage], 3  # real mode, before BIOS service
+
+    addr32 cmp BYTE PTR [bios_service], 3
+    je rm_memory_map
+    addr32 mov dl, BYTE PTR [bios_drive_param]
+    addr32 cmp BYTE PTR [bios_service], 1
+    je rm_edd_query
+    addr32 cmp BYTE PTR [bios_service], 2
+    je rm_edd_rw
 
     addr32 mov ax, WORD PTR [bios_buf_seg]
     mov es, ax
@@ -268,11 +315,85 @@ rm_bios_entry:
     addr32 mov cl, BYTE PTR [bios_sector_param]
     addr32 mov dh, BYTE PTR [bios_head_param]
     addr32 mov dl, BYTE PTR [bios_drive_param]
-    addr32 mov DWORD PTR [bios_stage], 3  # real mode, before BIOS INT 13h
 
     sti
     int 0x13
+    jmp rm_bios_finished
+
+rm_edd_query:
+    mov ax, 0x4100
+    mov bx, 0x55aa
+    sti
+    int 0x13
+    jc rm_bios_finished
+    cmp bx, 0xaa55
+    jne rm_bios_invalid
+    test cx, 1                 # packet read/write subset
+    jz rm_bios_invalid
+    mov ax, 0x1000
+    mov ds, ax
+    mov esi, OFFSET FLAT:bios_edd_parameters - KERNEL_BASE
+    addr32 mov dl, BYTE PTR cs:[bios_drive_param - KERNEL_BASE]
+    mov ax, 0x4800
+    int 0x13
+    jmp rm_bios_finished
+
+rm_edd_rw:
+    mov ax, 0x1000
+    mov ds, ax
+    mov esi, OFFSET FLAT:bios_dap - KERNEL_BASE
+    addr32 mov ah, BYTE PTR cs:[bios_ah - KERNEL_BASE]
+    xor al, al                # extended write: no verify flag
+    sti
+    int 0x13
+    jmp rm_bios_finished
+
+rm_memory_map:
+    xor ebx, ebx
+.map_next:
+    addr32 mov eax, DWORD PTR cs:[bios_memory_count - KERNEL_BASE]
+    cmp eax, 64
+    jae rm_bios_invalid       # incomplete map: do not trust its usable ranges
+    imul edi, eax, 24
+    add edi, OFFSET FLAT:bios_memory_ranges - KERNEL_BASE
+    mov ax, 0x1000
+    mov es, ax
+    mov DWORD PTR es:[di + 20], 1
+    mov eax, 0xe820
+    mov edx, 0x534d4150
+    mov ecx, 24
+    sti
+    int 0x15
+    jc .map_carry
+    cmp eax, 0x534d4150
+    jne rm_bios_invalid
+    cmp ecx, 20
+    jb rm_bios_invalid
+    addr32 inc DWORD PTR cs:[bios_memory_count - KERNEL_BASE]
+    test ebx, ebx
+    jnz .map_next
+    jmp .map_done
+.map_carry:
+    addr32 cmp DWORD PTR cs:[bios_memory_count - KERNEL_BASE], 0
+    je rm_bios_invalid
+.map_done:
+    xor ax, ax
+    clc
+    jmp rm_bios_finished
+
+rm_bios_invalid:
+    mov ah, 1
+    stc
+rm_bios_finished:
     cli
+    # EDD needs DS:SI in the kernel segment; restore DS without changing the
+    # BIOS carry/status result before accessing absolute lowdata addresses.
+    pushf
+    push ax
+    xor ax, ax
+    mov ds, ax
+    pop ax
+    popf
     addr32 mov DWORD PTR [bios_stage], 4  # BIOS INT 13h returned
 
     addr32 mov BYTE PTR [bios_status_ah], ah
@@ -293,6 +414,7 @@ rm_bios_entry:
 .section .text,"ax"
 .code32
 pm32_bios_return:
+    cld                         # C requires forward string operations
     mov ax, DATA32_SEL
     mov ds, ax
     mov es, ax
@@ -340,6 +462,16 @@ bios_sector_param:    .byte 0
 bios_head_param:      .byte 0
 bios_status_ah:       .byte 0
 bios_carry:           .byte 0
+bios_service:         .byte 0
+.align 16
+bios_dap:             .space 16
+.global bios_edd_parameters
+bios_edd_parameters:  .space 30
+.align 8
+.global bios_memory_count
+bios_memory_count:    .long 0
+.global bios_memory_ranges
+bios_memory_ranges:   .space 64 * 24
 .align 16
 .global bios_bounce
 bios_bounce:          .space 512

@@ -14,10 +14,16 @@ test. Read [COVERAGE.md](COVERAGE.md) for the specific limits and next additions
 | File | What to look for |
 | --- | --- |
 | `src/main.c` | The prompts, suite order, repeated passes, and final save decision. |
+| `src/storage.c` / `src/disk.c` | FAT volume discovery, bounded file saving and BIOS sector adapters. |
 | `src/testfw.c` | How a named assertion becomes PASS, FAIL, EXEC, or SKIP. |
 | `include/archtest.h` | Register bits, vector layout, counters, and fixed memory/disk layout. |
 | `src/tests/immediates.c` | A readable example of a hardware result checked against integer C reference calculations. |
 | `src/tests/mmx_edges.c` | Saturation, shifts, packing, and diagnostic input patterns. |
+| `src/tests/mmx_matrix.c` | Integer references for 44 operations, real self-aliasing, and every byte-mask pattern. |
+| `src/tests/sse_moves.c` | Move lane selection, zeroing rules, source preservation and guarded stores. |
+| `src/tests/sse_compare_matrix.c` | Comparison predicates and exact EFLAGS/MXCSR checks. |
+| `src/tests/sse_numeric_boundaries.c` | Conversion limits, integer rounding references, gradual underflow and reciprocal bounds. |
+| `src/tests/memory_faults.c` / `state_payloads.c` | Fault side effects and the MMX/x87 parts of saved state. |
 | `src/tests/sse_fp_edges.c` / `sse_packed_edges.c` | Floating-point classes, scalar lanes, comparisons, and status flags. |
 | `src/tests/mxcsr_edges.c` | Rounding, trap masks, and prerequisite failures. |
 | `src/faults.c` / `faults.S` | How an intentional CPU exception returns to the test. |
@@ -30,24 +36,27 @@ the pieces so you do not have to start by reading thousands of generated probes.
 ## From boot to results
 
 1. **Load the kernel.** The BIOS loads `boot.S` at physical address `0x7c00`.
-   This loader copies 256 reserved sectors to `0x10000`. It uses fixed sectors,
+   This loader copies 384 reserved sectors to `0x10000`. It uses fixed sectors,
    not a FAT file lookup.
 2. **Enter protected mode.** `entry.S` enables A20, configures CR0/CR4, loads a
    global descriptor table (GDT), and switches to 32-bit code. It zeroes BSS and
    installs the exception table (IDT) before calling `kernel_main()`.
 3. **Choose a run.** `main.c` checks advertised CPU features and reads the pass
-   count and logging mode. The boot environment already assumes a suitable CPU;
+   count, logging mode and destination. BIOS E820 bounds the log buffer and
+   read-only disk discovery lists available FAT16/FAT32 volumes.
+   The boot environment already assumes a suitable CPU;
    this is not a universal loader for machines without SSE support.
 4. **Run the suites.** Each pass resets control state, executes the baseline and
    edge suites, and restores control state. Ordinary C cannot use floating-point
    or SIMD instructions because the build disables compiler-generated x87/MMX/SSE.
 5. **Record outcomes.** VGA/COM1 display progress. Log text accumulates in physical
-   RAM from `0x100000`, capped at 1,326,592 bytes. This region is assumed available;
-   there is no BIOS memory-map allocation.
-6. **Finish disk work.** After testing, `log_commit()` writes the preallocated
-   `RESULTS.TXT` data and then its file size. The BIOS bridge temporarily returns
-   to real mode for sector I/O. Choosing N also performs a directory write to hide
-   any older log by setting its size to zero.
+   RAM from `0x100000`. E820 bounds the usable region, with a 64 MiB limit for
+   hard-drive capture and a 1,261,056-byte limit for floppy capture. The logger
+   reserves space for final totals even when the record area fills.
+6. **Finish disk work.** After testing, `log_commit()` either writes the floppy's
+   preallocated `RESULTS.TXT` or creates a new file on the selected hard drive
+   through FatFs. The BIOS bridge temporarily returns to real mode for sector I/O.
+   N hides an older floppy log, but leaves a selected hard drive untouched.
 
 Repeated passes use the same inputs. They may expose an emulator bug that appears
 after recompilation or state reuse, but do not explore additional numeric values.

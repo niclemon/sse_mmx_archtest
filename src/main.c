@@ -7,6 +7,52 @@
 #include "testfw.h"
 #include "tests.h"
 #include "io.h"
+#include "disk.h"
+#include "storage.h"
+
+/* Probe before resetting CPU state for the first test. BIOS disk calls use
+ * interrupts and real mode; they must stay outside the architectural probes. */
+static int choose_log_target(void) {
+    uint32_t ram = disk_log_memory_capacity(64u * 1024u * 1024u);
+    if (ram < 4096) {
+        console_puts("Cannot find a usable log buffer in the BIOS memory map.\n");
+        for (;;) { cpu_cli(); cpu_halt(); }
+    }
+    console_puts("\nLooking for FAT16/FAT32 hard-drive volumes...\n");
+    unsigned count = hd_scan();
+    for (;;) {
+        console_puts("Save destination:\n"
+                     "  [1] Floppy - about 2 clean ALL-results passes; failures use more space\n");
+        if (count) console_puts("  [2] Hard drive\n");
+        else console_puts("  No supported FAT16/FAT32 hard-drive volume found.\n");
+        char choice = input_read_choice(count ? "12" : "1");
+        if (choice == '1') {
+            log_configure(ram, 0, 0);
+            return 0;
+        }
+        for (unsigned i = 0; i < count; ++i) {
+            const hd_volume *v = hd_get_volume(i);
+            console_printf("  %u: hard disk %u, partition %u, FAT%u, %u MiB [%s]\n",
+                           i + 1, v->drive - 0x7fu, v->partition, v->fat_bits,
+                           v->sectors / 2048u, v->label);
+        }
+        console_puts("Choose volume number: ");
+        unsigned volume = input_read_decimal(1, count) - 1;
+        if (hd_select(volume)) {
+            console_printf("Cannot use that volume: %s\n", hd_error());
+            continue;
+        }
+        console_puts("Checking free space and FAT copies...\n");
+        uint32_t available = hd_capture_capacity(ram);
+        if (!available) {
+            console_printf("Cannot use that volume: %s\n", hd_error());
+            continue;
+        }
+        log_configure(available, 1, volume);
+        console_puts("Existing files will be kept; name collisions get RES00001.TXT, etc.\n");
+        return 1;
+    }
+}
 
 /* Establish the same control state at both ends of each pass. This does not
  * clear every MM/XMM register; each probe must load the operands it needs.
@@ -38,13 +84,19 @@ static void run_one_pass(void) {
     tf_group("operand forms: memory-source/register-form cross-checks");
     run_operand_form_suite();
     run_edge_mmx();
+    run_mmx_matrix();
+    run_sse_moves();
     run_edge_sse_fp();
     run_edge_sse_packed();
+    run_sse_compare_matrix();
+    run_sse_numeric_boundaries();
     run_edge_mxcsr();
     run_edge_memory();
+    run_memory_faults();
     run_edge_immediates();
     run_edge_registers();
     run_edge_state();
+    run_state_payloads();
     run_edge_fault_gating();
     tf_end_group();
 
@@ -55,7 +107,7 @@ void kernel_main(void) {
     console_init();
     console_puts("\n" ARCHTEST_NAME "\n");
     console_puts("Hybrid freestanding C harness + exact assembly opcode probes\nRAM-buffered "
-                 "logging; BIOS disk I/O only after tests finish\n\n");
+                 "logging; disk writes only after tests finish\n\n");
 
     uint32_t edx = cpu_cpuid1_edx();
     uint32_t has_mmx = (edx >> 23) & 1u;
@@ -77,9 +129,12 @@ void kernel_main(void) {
     char choice = input_read_choice("FfAa");
     g_log_mode = (choice == 'A' || choice == 'a') ? LOG_ALL : LOG_FAIL_ONLY;
 
+    int hard_drive = choose_log_target();
+    console_printf("Log capture capacity: %u bytes (512 bytes reserved for final totals).\n", log_capacity());
+    if (g_log_mode == LOG_ALL && g_configured_passes > (log_capacity() - 512u) / 572000u)
+        console_puts("WARNING: the requested ALL-results log is likely to exceed capture capacity.\n");
+
     log_prepare(g_configured_passes, g_log_mode);
-    if (log_has_io_error())
-        console_puts("WARNING: floppy logging could not be initialized; tests will still run.\n");
 
     /* Counts accumulate across passes. Repetition uses the same vectors; it
      * can expose emulator state/tiering bugs but adds no new input values. */
@@ -93,6 +148,7 @@ void kernel_main(void) {
     }
     /* Keep the last valid pass number in summaries instead of passes+1. */
     g_current_pass = g_configured_passes;
+    log_begin_summary();
     tf_print_summary();
 
     console_printf("\nAggregate: total=%u pass=%u fail=%u exec=%u skip=%u\n", g_counts.total,
@@ -110,20 +166,21 @@ void kernel_main(void) {
         console_puts("SELF-CHECK FAILED: one or more architectural checks mismatched.\n");
 
     if (log_is_truncated())
-        console_puts("WARNING: RESULTS.TXT capture exceeded floppy capacity and was truncated.\n");
-    if (log_has_io_error())
-        console_puts("WARNING: a floppy I/O error occurred while capturing the log.\n");
+        console_puts("WARNING: log capture filled. Some records were dropped; final totals were kept.\n");
 
-    console_puts("\nSave captured log as RESULTS.TXT on the floppy? [Y/N]: ");
+    console_printf("\nSave captured log on the %s? [Y/N]: ", hard_drive ? "selected hard drive" : "floppy");
     choice = input_read_choice("YyNn");
     if (choice == 'Y' || choice == 'y') {
         if (log_commit() == 0)
-            console_printf("Saved RESULTS.TXT (%u bytes).\n", log_size());
+            console_printf("Saved %s (%u bytes).\n", log_filename(), log_size());
+        else if (hard_drive)
+            console_printf("Could not save log: %s\n", hd_error());
         else
             console_puts("Could not commit RESULTS.TXT. Check that the floppy is writable.\n");
     } else {
         log_discard();
-        console_puts("Log discarded (RESULTS.TXT file size left at zero).\n");
+        console_puts(hard_drive ? "Log discarded; hard drive unchanged.\n" :
+                                 "Log discarded (RESULTS.TXT file size left at zero).\n");
     }
 
     console_puts("\nDone. Power off or reset the machine.\n");

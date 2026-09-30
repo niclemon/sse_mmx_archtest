@@ -5,17 +5,9 @@
 #include "testfw.h"
 #include "tests.h"
 
-/*
- * IMPORTANT: do not use &&resume as an exception return target in optimized C.
- * GCC is free to merge/move such labels because it cannot see the asynchronous
- * transfer from our ISR. A misplaced continuation can restart the test group
- * with CR0.TS still set, repeatedly faulting until the machine resets.
- *
- * Each probe below writes the address of an assembler-local label into
- * fault_resume_eip immediately before the faulting instruction.  That gives
- * the ISR an exact architectural continuation address which the compiler
- * cannot coalesce with another C basic block.
- */
+/* Keep fault continuations inside the asm block. GCC can merge C labels used
+ * only as addresses, which once made a #NM return restart this group with TS
+ * still set. The local 1f label gives the handler an exact place to resume. */
 
 /* TS (task switched) asks the OS to restore the task's floating-point state;
  * executing SSE/MMX with TS set must raise #NM before doing the operation.

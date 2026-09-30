@@ -188,24 +188,27 @@ static uint32_t xm_denormal(void) {
     cpu_set_mxcsr(MXCSR_DEFAULT);
     return v;
 }
-static uint32_t gp_bad_mxcsr(void) {
-    uint32_t x = MXCSR_DEFAULT | 0x80000000u;
+static uint32_t gp_bad_mxcsr(uint32_t bit, uint32_t *site) {
+    uint32_t x = MXCSR_DEFAULT | bit;
     fault_arm(X86_VEC_GP, 0);
     __asm__ volatile("movl $1f, fault_resume_eip\n\t"
-                     "ldmxcsr (%0)\n\t"
-                     "1:\n\t" ::"r"(&x)
-                     : "memory");
+                     "movl $2f,%0\n\t"
+                     "2: ldmxcsr (%1)\n\t"
+                     "1:\n\t" : "=m"(*site) : "r"(&x) : "memory");
     return fault_disarm();
 }
 
-/* FXSAVE byte offset 28 reports supported MXCSR bits. A zero field uses the
- * architectural fallback 0x0000ffbf (DAZ excluded). Return the EFFECTIVE
- * mask; callers cannot distinguish a zero raw field from this fallback. */
-static uint32_t get_mxcsr_mask(void) {
+/* Clear the image first: old CPUs may leave MXCSR_MASK unwritten. Keep the
+ * raw field available for validation before applying Intel's zero fallback. */
+static uint32_t get_raw_mxcsr_mask(void) {
     static uint8_t area[512] __attribute__((aligned(16)));
+    for (unsigned i = 0; i < sizeof(area); ++i) area[i] = 0;
     cpu_fxsave(area);
-    uint32_t *p = (uint32_t *)(area + 28);
-    return *p ? *p : 0x0000ffbfu;
+    return *(uint32_t *)(area + 28);
+}
+static uint32_t get_mxcsr_mask(void) {
+    uint32_t raw = get_raw_mxcsr_mask();
+    return raw ? raw : 0x0000ffbfu;
 }
 
 /*
@@ -265,23 +268,34 @@ static int mxcsr_health_probe(void) {
 }
 
 static void run_independent_mxcsr_checks(void) {
-    tf_begin("LDMXCSR reserved high bit -> #GP");
-    tf_check_fault(gp_bad_mxcsr(), X86_VEC_GP);
-    /* Coverage limitation: the effective mask is always nonzero, so the
-     * following case does not validate raw MXCSR_MASK or its reserved bits.
-     * It currently records availability of the mask/fallback path only. */
-    uint32_t mask = get_mxcsr_mask();
-    tf_begin("FXSAVE MXCSR_MASK nonzero/architectural");
-    if (mask)
-        tf_pass();
-    else
-        tf_fail_text("MXCSR_MASK unavailable");
+    /* Each reserved high bit is independently rejected. Seed a nondefault
+     * valid state to detect an instruction that faults after changing MXCSR. */
+    for (unsigned bit = 16; bit < 32; ++bit) {
+        uint32_t site, seed = MXCSR_DEFAULT | MXCSR_RC_DOWN | MXCSR_IE;
+        cpu_set_mxcsr(seed);
+        uint32_t vector = gp_bad_mxcsr(1u << bit, &site);
+        uint32_t after = cpu_get_mxcsr();
+        cpu_set_mxcsr(MXCSR_DEFAULT);
+        tf_begin_indexed("LDMXCSR reserved bit -> #GP", bit);
+        tf_check_fault(vector, X86_VEC_GP);
+        tf_begin_indexed("LDMXCSR #GP error code", bit);
+        tf_check_u32(fault_seen_error, 0);
+        tf_begin_indexed("LDMXCSR #GP saved EIP", bit);
+        tf_check_u32(fault_seen_eip, site);
+        tf_begin_indexed("LDMXCSR #GP leaves MXCSR unchanged", bit);
+        tf_check_u32(after, seed);
+    }
+    uint32_t raw = get_raw_mxcsr_mask();
+    uint32_t effective = raw ? raw : 0x0000ffbfu;
+    tf_begin("FXSAVE raw MXCSR_MASK has no reserved high bits");
+    tf_check_u32(raw & 0xffff0000u, 0);
+    tf_begin("FXSAVE effective MXCSR_MASK exposes baseline control/status bits");
+    tf_check_mask_u32(effective, 0x00007fbfu, 0x00007fbfu);
 }
 
 static void skip_dependent_mxcsr_checks(const char *reason) {
-    /* Of the 57 main MXCSR cases, two (#GP + MXCSR_MASK) run independently
-     * of the prerequisites, leaving 55 dependent checks. The three health
-     * probes are accounted separately. See the mask-check limitation above. */
+    /* Keep all 55 dependent outcomes in the totals when the prerequisite
+     * fails. The 66 load/mask checks and three health probes count separately. */
     tf_skip_many("MXCSR-dependent rounding/flag/#XM/DAZ/FZ checks", reason, 55u);
 }
 

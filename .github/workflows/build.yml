@@ -23,6 +23,10 @@ jobs:
         run: make verify
       - name: Coverage inventory
         run: python3 tools/coverage_report.py
+      - name: Native reference checks (two passes)
+        run: make verify-hosted
+      - name: FAT file saving, RAM bounds and truncation checks
+        run: make verify-storage
       - uses: actions/upload-artifact@v4
         with:
           name: sse_mmx_archtest_floppy

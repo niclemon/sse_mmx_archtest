@@ -10,7 +10,7 @@
  *  24: MXCSR, 28: MXCSR_MASK, 160..287: XMM0..XMM7 (16 bytes each).
  * The image is 512 bytes and must be 16-byte aligned. Padding keeps a full
  * image in allocated storage even for the deliberately misaligned probes.
- * This suite does not check all x87/MMX payloads or every saved-state field. */
+ * state_payloads.c checks the MMX/x87 payloads and nonempty stack tags. */
 static uint8_t area_raw[512 + 16] __attribute__((aligned(16)));
 static u128 src[8] __attribute__((aligned(16)));
 static u128 dst[8] __attribute__((aligned(16)));
@@ -58,8 +58,32 @@ static uint32_t gp_fxrstor(void *p) {
     return fault_disarm();
 }
 
+static void reserved_mxcsr_restore(void) {
+    cpu_set_mxcsr(MXCSR_DEFAULT);
+    cpu_fxsave(area_raw);
+    for (unsigned bit = 16; bit < 32; ++bit) {
+        uint32_t site;
+        *(uint32_t *)(area_raw + 24) = MXCSR_DEFAULT | (1u << bit);
+        fault_arm(X86_VEC_GP, 0);
+        __asm__ volatile("movl $1f,fault_resume_eip\n\tmovl $2f,%0\n\t"
+                         "2: fxrstor (%1)\n\t1:"
+                         : "=m"(site) : "r"(area_raw) : "memory");
+        uint32_t vector = fault_disarm();
+        /* FXRSTOR need not be atomic for every saved component on a fault.
+         * Reload a valid image before reporting or starting the next probe. */
+        *(uint32_t *)(area_raw + 24) = MXCSR_DEFAULT;
+        cpu_fxrstor(area_raw);
+        tf_begin_indexed("FXRSTOR reserved MXCSR bit -> #GP", bit);
+        tf_check_fault(vector, X86_VEC_GP);
+        tf_begin_indexed("FXRSTOR reserved MXCSR error code", bit);
+        tf_check_u32(fault_seen_error, 0);
+        tf_begin_indexed("FXRSTOR reserved MXCSR saved EIP", bit);
+        tf_check_u32(fault_seen_eip, site);
+    }
+}
+
 void run_edge_state(void) {
-    tf_group("FXSAVE/FXRSTOR complete SSE1 state + alignment");
+    tf_group("FXSAVE/FXRSTOR XMM state, reserved MXCSR and alignment");
     /* Give each register/lane a different pattern to expose swapped fields.
      * FXSAVE observes state without resetting it. FNINIT sets FCW=0x037f;
      * EMMS leaves all x87 tags empty (zero in the abridged tag byte). */
@@ -101,7 +125,7 @@ void run_edge_state(void) {
         tf_begin("FXSAVE unaligned -> #GP");
         tf_check_fault(gp_fxsave(area_raw + off), X86_VEC_GP);
     }
-    /* Restore area_raw after the fault tests, because some implementations may touch bytes before faulting. */
+    /* Rebuild a valid image before using it as an FXRSTOR source. */
     cpu_set_mxcsr(MXCSR_DEFAULT);
     xmm_load_all(src);
     cpu_fxsave(area_raw);
@@ -109,6 +133,7 @@ void run_edge_state(void) {
         tf_begin("FXRSTOR unaligned -> #GP");
         tf_check_fault(gp_fxrstor(area_raw + off), X86_VEC_GP);
     }
+    reserved_mxcsr_restore();
     cpu_set_mxcsr(MXCSR_DEFAULT);
     cpu_emms();
 }

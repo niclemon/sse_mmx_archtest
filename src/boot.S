@@ -7,7 +7,7 @@
 .section .text
 .global _start
 
-.equ KERNEL_SECTORS, 256
+.equ KERNEL_SECTORS, 384
 .equ LOAD_SEG, 0x1000
 
 _start:

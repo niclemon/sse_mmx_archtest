@@ -46,26 +46,27 @@ static void reset(void) {
     cpu_set_mxcsr(MXCSR_DEFAULT);
 }
 
-/* nan_mask bit i replaces an exact comparison in lane i with an any-NaN
- * check. required_flags must be present, but additional flags are allowed.
- * This helper reports one combined result/status case. */
+/* Only the marked lanes may have an unspecified NaN payload. They must still
+ * be quiet NaNs. Reject extra status flags as well as missing ones. */
 static void cmp_lane_class(const char *n, const u128 *a, const u128 *e, uint32_t nan_mask,
                            uint32_t required_flags) {
     tf_begin(n);
+    uint32_t mx = cpu_get_mxcsr();
     uint32_t ok = 1;
     for (unsigned i = 0; i < 4; i++) {
         if (nan_mask & (1u << i)) {
-            if (!is_nan(a->lane[i]))
+            if (!is_qnan(a->lane[i]))
                 ok = 0;
         } else if (a->lane[i] != e->lane[i])
             ok = 0;
     }
-    if ((cpu_get_mxcsr() & required_flags) != required_flags)
-        ok = 0;
     if (ok)
         tf_pass();
     else
-        tf_fail_text("packed lane class/value or MXCSR flags mismatch");
+        tf_fail_text("packed lane value or quiet-NaN class mismatch");
+    tf_begin(n);
+    tf_set_detail("exact MXCSR control/status");
+    tf_check_u32(mx, MXCSR_DEFAULT | required_flags);
 }
 
 /* Emit eight literal predicates: legacy CMPPS uses 0..7. A true lane is all
@@ -213,17 +214,18 @@ void run_edge_sse_packed(void) {
     uint32_t qi[2];
     reset();
     cvtps2pi_bits(&a, qi, 0);
+    uint32_t convert_mx = cpu_get_mxcsr();
+    const uint32_t indefinite[2] = {0x80000000u, 0x80000000u};
     tf_begin("CVTPS2PI NaN/+inf integer indefinite");
-    if (qi[0] == 0x80000000u && qi[1] == 0x80000000u && (cpu_get_mxcsr() & MXCSR_IE))
-        tf_pass();
-    else
-        tf_fail_text("packed conversion invalid result/flag mismatch");
+    tf_check_u64(qi, indefinite);
+    tf_begin("CVTPS2PI NaN/+inf exact invalid status");
+    tf_check_u32(convert_mx, MXCSR_DEFAULT | MXCSR_IE);
     reset();
     cvtps2pi_bits(&a, qi, 1);
+    convert_mx = cpu_get_mxcsr();
     tf_begin("CVTTPS2PI NaN/+inf integer indefinite");
-    if (qi[0] == 0x80000000u && qi[1] == 0x80000000u && (cpu_get_mxcsr() & MXCSR_IE))
-        tf_pass();
-    else
-        tf_fail_text("packed truncating conversion invalid result/flag mismatch");
+    tf_check_u64(qi, indefinite);
+    tf_begin("CVTTPS2PI NaN/+inf exact invalid status");
+    tf_check_u32(convert_mx, MXCSR_DEFAULT | MXCSR_IE);
     reset();
 }

@@ -10,6 +10,7 @@
 void tf_group(const char *name);
 void tf_end_group(void);
 void tf_begin(const char *name);
+void tf_begin_indexed(const char *name, uint32_t index);
 /* Names/details are borrowed pointers, not copied strings. Keep them alive
  * through the check/report that uses them; tf_begin() clears the detail. */
 void tf_set_detail(const char *detail);
@@ -22,6 +23,7 @@ void tf_fail_guest_reg(const char *reg, uint32_t expected, uint32_t actual);
 void tf_check_u32(uint32_t actual, uint32_t expected);
 void tf_check_u64(const void *actual, const void *expected);
 void tf_check_u128(const void *actual, const void *expected);
+void tf_check_bytes(const void *actual, const void *expected, uint32_t size);
 void tf_check_approx4(const void *actual, const void *expected);
 void tf_check_approx_scalar(const void *actual, const void *expected);
 void tf_check_mask_u32(uint32_t actual, uint32_t expected, uint32_t mask);

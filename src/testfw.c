@@ -68,6 +68,32 @@ void tf_begin(const char *name) {
     current_detail = 0;
 }
 
+/* Keep matrix failures reproducible without building a name for every row.
+ * Like the current case name, this buffer belongs to the single active case. */
+void tf_begin_indexed(const char *name, uint32_t index) {
+    static char detail[] = "case=0x00000000";
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned i = 0; i < 8; ++i)
+        detail[7 + i] = hex[(index >> (28 - 4 * i)) & 15];
+    tf_begin(name);
+    tf_set_detail(detail);
+}
+
+/* Check the whole guarded buffer, so a correct payload cannot hide a write
+ * just before or after it. Report the first differing byte and its offset. */
+void tf_check_bytes(const void *actual, const void *expected, uint32_t size) {
+    const uint8_t *a = actual, *e = expected;
+    for (uint32_t i = 0; i < size; ++i) {
+        if (a[i] != e[i]) {
+            tf_fail_text("byte buffer mismatch");
+            console_printf("    offset=%u expected=%02x actual=%02x\n", i, e[i], a[i]);
+            log_printf("  offset=%08x expected=%02x actual=%02x\r\n", i, e[i], a[i]);
+            return;
+        }
+    }
+    tf_pass();
+}
+
 /* Borrow the string until the next tf_begin(); do not retain a dead stack
  * buffer. The tests normally check/report immediately after setting detail. */
 void tf_set_detail(const char *detail) {
@@ -162,36 +188,45 @@ void tf_check_mask_u32(uint32_t actual, uint32_t expected, uint32_t mask) {
 /* Compare raw bits, including floating-point NaN payloads and signed zero.
  * Hex diagnostics print the most significant dword first; lane[0] and the
  * lowest-addressed bytes appear at the RIGHT of the printed value. */
+static uint32_t read_le32(const uint8_t *p) {
+    /* Fault diagnostics also receive deliberately unaligned byte buffers. */
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
 void tf_check_u64(const void *actual, const void *expected) {
-    const uint32_t *a = (const uint32_t *)actual;
-    const uint32_t *e = (const uint32_t *)expected;
-    if (memeq((const uint8_t *)a, (const uint8_t *)e, 8)) {
+    const uint8_t *a = actual, *e = expected;
+    if (memeq(a, e, 8)) {
         tf_pass();
         return;
     }
     ++g_counts.total;
     ++g_counts.failed;
-    console_printf("  FAIL %s expected=%08x%08x actual=%08x%08x\n", current_name, e[1], e[0], a[1],
-                   a[0]);
+    console_printf("  FAIL %s", current_name);
+    if (current_detail) console_printf(" [%s]", current_detail);
+    console_printf(" expected=%08x%08x actual=%08x%08x\n", read_le32(e + 4), read_le32(e),
+                   read_le32(a + 4), read_le32(a));
     log_prefix("FAIL");
-    log_printf("  expected=0x%08x%08x actual=0x%08x%08x\r\n", e[1], e[0], a[1], a[0]);
+    log_printf("  expected=0x%08x%08x actual=0x%08x%08x\r\n", read_le32(e + 4), read_le32(e),
+               read_le32(a + 4), read_le32(a));
 }
 
 void tf_check_u128(const void *actual, const void *expected) {
-    const uint32_t *a = (const uint32_t *)actual;
-    const uint32_t *e = (const uint32_t *)expected;
-    if (memeq((const uint8_t *)a, (const uint8_t *)e, 16)) {
+    const uint8_t *a = actual, *e = expected;
+    if (memeq(a, e, 16)) {
         tf_pass();
         return;
     }
     ++g_counts.total;
     ++g_counts.failed;
-    console_printf("  FAIL %s\n", current_name);
-    console_printf("    expected=%08x%08x%08x%08x\n", e[3], e[2], e[1], e[0]);
-    console_printf("    actual  =%08x%08x%08x%08x\n", a[3], a[2], a[1], a[0]);
+    console_printf("  FAIL %s", current_name);
+    if (current_detail) console_printf(" [%s]", current_detail);
+    console_putc('\n');
+    console_printf("    expected=%08x%08x%08x%08x\n", read_le32(e + 12), read_le32(e + 8), read_le32(e + 4), read_le32(e));
+    console_printf("    actual  =%08x%08x%08x%08x\n", read_le32(a + 12), read_le32(a + 8), read_le32(a + 4), read_le32(a));
     log_prefix("FAIL");
-    log_printf("  expected=0x%08x%08x%08x%08x\r\n", e[3], e[2], e[1], e[0]);
-    log_printf("  actual=0x%08x%08x%08x%08x\r\n", a[3], a[2], a[1], a[0]);
+    log_printf("  expected=0x%08x%08x%08x%08x\r\n", read_le32(e + 12), read_le32(e + 8), read_le32(e + 4), read_le32(e));
+    log_printf("  actual=0x%08x%08x%08x%08x\r\n", read_le32(a + 12), read_le32(a + 8), read_le32(a + 4), read_le32(a));
 }
 
 /* A deliberately restricted RCP/RSQRT oracle, not a general float comparator.

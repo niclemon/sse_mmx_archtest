@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a 1.44 MiB FAT12 floppy containing the fixed-location test kernel.
 
-The boot sector reserves sectors 1..256 for the kernel.  The first root entry
+The boot sector reserves sectors 1..384 for the kernel. The first root entry
 is RESULTS.TXT, whose FAT chain is preallocated over all remaining data
 clusters.  The guest logger leaves its size at zero until the user chooses Y.
 """
@@ -10,7 +10,7 @@ import argparse, struct
 
 SECTOR=512
 TOTAL=2880
-KERNEL_SECTORS=256
+KERNEL_SECTORS=384
 RESERVED=1+KERNEL_SECTORS
 SPF=9
 NFATS=2
@@ -46,6 +46,8 @@ def main() -> None:
     boot=args.boot.read_bytes(); kernel=args.kernel.read_bytes()
     if len(boot)!=SECTOR or boot[510:512]!=b'\x55\xaa':
         raise SystemExit('boot.bin must be exactly 512 bytes with 55 AA signature')
+    if struct.unpack_from('<H', boot, 14)[0] != RESERVED:
+        raise SystemExit('boot.bin reserved-sector count disagrees with image builder; rebuild boot.S')
     if len(kernel)>KERNEL_SECTORS*SECTOR:
         raise SystemExit(f'kernel is {len(kernel)} bytes; maximum is {KERNEL_SECTORS*SECTOR}')
 

@@ -35,6 +35,15 @@ A new FAIL should identify one architectural assertion. Avoid compound checks th
 
 If one capability is a prerequisite for many derivative cases, probe it once and use `tf_skip_many()` to quarantine the derivatives after a root failure.
 
+For a matrix, use `tf_begin_indexed(name, index)` and document how to decode the
+index next to the loop. Use `tf_check_bytes()` for guarded buffers; checking only
+the payload misses stores that also overwrite adjacent bytes. Keep fixed seeds
+so a reported input row can be reproduced on another target.
+
+Keep status snapshots next to the probe, before calling diagnostic helpers.
+Check reserved bits and unexpected flags too, unless the architecture leaves
+them undefined. Reserved FXSAVE padding is not a portable expected value.
+
 When a test uses inline GAS AT&T syntax, verify operand order in the compiled object with Intel-syntax `objdump`, especially for irregular instructions such as `MASKMOVQ`.
 
 When a flag-producing instruction is followed by harness guards, snapshot the flags **before** any instruction that modifies EFLAGS. The generated COMISS/UCOMISS probes use `SETO` + `LAHF` before their register guard for this reason.
@@ -43,6 +52,7 @@ When a flag-producing instruction is followed by harness guards, snapshot the fl
 
 ```sh
 make clean verify
+make verify-hosted
 ```
 
 If a generator changed:
@@ -53,3 +63,8 @@ make clean verify
 ```
 
 Keep the harness flags `-mno-sse -mno-mmx -mno-80387` so ordinary C code cannot consume test architectural state unexpectedly.
+
+Update `tools/coverage_report.py` when the number of recorded outcomes changes,
+including skip paths. The hosted runner checks the count for its subset. Check
+the full guest count with `python3 tools/coverage_report.py --check-log RESULTS.TXT`
+after booting and saving an untruncated log.

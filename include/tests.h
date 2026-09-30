@@ -11,4 +11,10 @@ void run_edge_immediates(void);
 void run_edge_registers(void);
 void run_edge_state(void);
 void run_edge_fault_gating(void);
+void run_mmx_matrix(void);
+void run_sse_moves(void);
+void run_sse_compare_matrix(void);
+void run_sse_numeric_boundaries(void);
+void run_state_payloads(void);
+void run_memory_faults(void);
 #endif

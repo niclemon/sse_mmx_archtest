@@ -6,7 +6,7 @@
 
 #define ARCHTEST_NAME "MMX/SSE1 Architectural Test"
 #define KERNEL_BASE 0x00010000u
-#define KERNEL_SECTORS 256u
+#define KERNEL_SECTORS 384u
 #define MAX_PASSES 10000u
 
 /* Fixed floppy layout shared by boot.S, tools/build_image.py and log.c.
@@ -23,10 +23,9 @@
 #define FAT_TOTAL_SECTORS 2880u
 #define RESULTS_MAX_SECTORS (FAT_TOTAL_SECTORS - FAT_DATA_LBA)
 #define RESULTS_MAX_BYTES (RESULTS_MAX_SECTORS * 512u)
-/* Physical scratch RAM, not dynamically allocated or checked against a BIOS
- * memory map. The target machine must provide RAM through LOG_RAM_END. */
+/* Scratch RAM starts above the kernel/BIOS area. E820 bounds the usable range
+ * at runtime; floppy capture is also capped by RESULTS_MAX_BYTES. */
 #define LOG_RAM_BASE 0x00100000u
-#define LOG_RAM_END (LOG_RAM_BASE + RESULTS_MAX_BYTES)
 
 #define X86_VEC_UD 6u
 #define X86_VEC_NM 7u

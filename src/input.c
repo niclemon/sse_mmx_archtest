@@ -5,7 +5,7 @@
 
 /* Poll the PC keyboard controller; protected-mode execution keeps hardware
  * interrupts disabled. This assumes BIOS-configured translated set-1 scan
- * codes and recognizes only the keys needed by the three runner prompts. */
+ * codes and recognizes only the keys needed by the runner prompts. */
 static uint8_t read_scancode(void) {
     for (;;) {
         if (inb(0x64) & 1u)

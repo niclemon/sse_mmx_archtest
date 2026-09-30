@@ -228,10 +228,9 @@ static void op_pmovmskb(const q64 *s, uint32_t *out) {
     *out = a;
 }
 
-static void op_maskmovq(
-    const q64 *data, const q64 *mask,
-    uint8_t *
-        dst) { /* AT&T source order is mask,data for MASKMOVQ; this emits Intel `maskmovq mm0,mm1` (data=mm0, mask=mm1). */
+/* GAS lists mask before data; Intel syntax prints the operands in reverse.
+ * EDI supplies the destination address implicitly. */
+static void op_maskmovq(const q64 *data, const q64 *mask, uint8_t *dst) {
     __asm__ volatile("movq (%0),%%mm0\n\t"
                      "movq (%1),%%mm1\n\t"
                      "maskmovq %%mm1,%%mm0\n\t"

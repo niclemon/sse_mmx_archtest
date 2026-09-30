@@ -62,22 +62,24 @@ static void check_scalar_exact(const char *n, scalar_bin_fn f, uint32_t a0, uint
     tf_check_u128(&o, &e);
 }
 
-/* This older helper combines class, upper-lane and required-status checks
- * into one case. It accepts either NaN class and does not reject extra flags;
- * the dedicated SQRT checks below make stronger, separately named assertions. */
+/* Invalid arithmetic must produce a quiet NaN. Its payload is unspecified
+ * here; upper-lane preservation and the full status word are separate checks. */
 static void check_scalar_nan(const char *n, scalar_bin_fn f, uint32_t a0, uint32_t b0,
                              uint32_t required_flags) {
     const u128 a = {{a0, 0x11223344u, 0x55667788u, 0x99aabbccu}};
     u128 o;
-    tf_begin(n);
     reset_mx();
     f(&a, &b0, &o);
     uint32_t mx = cpu_get_mxcsr();
-    if (f_is_nan(o.lane[0]) && o.lane[1] == a.lane[1] && o.lane[2] == a.lane[2] &&
-        o.lane[3] == a.lane[3] && (mx & required_flags) == required_flags)
-        tf_pass();
-    else
-        tf_fail_text("NaN/class, upper-lane, or MXCSR flag mismatch");
+    tf_begin(n);
+    tf_set_detail("quiet NaN result");
+    tf_check_u32(f_is_qnan(o.lane[0]), 1);
+    tf_begin(n);
+    tf_set_detail("upper lanes unchanged");
+    tf_check_bytes(o.lane + 1, a.lane + 1, 12);
+    tf_begin(n);
+    tf_set_detail("exact MXCSR control/status");
+    tf_check_u32(mx, MXCSR_DEFAULT | required_flags);
 }
 
 static void op_comiss(uint32_t a, uint32_t b, uint32_t *flags) {
@@ -85,24 +87,24 @@ static void op_comiss(uint32_t a, uint32_t b, uint32_t *flags) {
     __asm__ volatile("movss (%1),%%xmm0\n\t"
                      "movss (%2),%%xmm1\n\t"
                      "comiss %%xmm1,%%xmm0\n\t"
-                     "pushfl\n\t"
-                     "popl %0"
-                     : "=r"(f)
+                     "seto %%al\n\t"
+                     "lahf"
+                     : "=&a"(f)
                      : "r"(&a), "r"(&b)
                      : "cc", "memory");
-    *flags = f;
+    *flags = ((f >> 8) & 0xd5u) | ((f & 1u) << 11);
 }
 static void op_ucomiss(uint32_t a, uint32_t b, uint32_t *flags) {
     uint32_t f;
     __asm__ volatile("movss (%1),%%xmm0\n\t"
                      "movss (%2),%%xmm1\n\t"
                      "ucomiss %%xmm1,%%xmm0\n\t"
-                     "pushfl\n\t"
-                     "popl %0"
-                     : "=r"(f)
+                     "seto %%al\n\t"
+                     "lahf"
+                     : "=&a"(f)
                      : "r"(&a), "r"(&b)
                      : "cc", "memory");
-    *flags = f;
+    *flags = ((f >> 8) & 0xd5u) | ((f & 1u) << 11);
 }
 
 static void check_compare_nan(const char *n, int ucom, uint32_t nan, uint32_t expect_ie) {
@@ -156,10 +158,10 @@ static void check_indefinite_conversion(const char *n, uint32_t x, int trunc) {
     else
         op_cvtss2si(x, &r);
     uint32_t mx = cpu_get_mxcsr();
-    if (r == 0x80000000u && (mx & MXCSR_IE))
-        tf_pass();
-    else
-        tf_fail_text("expected integer indefinite + MXCSR.IE");
+    tf_check_u32(r, 0x80000000u);
+    tf_begin(n);
+    tf_set_detail("exact invalid status");
+    tf_check_u32(mx, MXCSR_DEFAULT | MXCSR_IE);
 }
 
 void run_edge_sse_fp(void) {
@@ -312,7 +314,7 @@ void run_edge_sse_fp(void) {
     check_indefinite_conversion("CVTSS2SI +2^31", 0x4f000000u, 0);
     check_indefinite_conversion("CVTTSS2SI +2^31", 0x4f000000u, 1);
 
-    /* Explicit exact scalar upper-lane preservation across the common arithmetic family. */
+    /* Simple exact results make any changed upper lane easy to spot. */
     check_scalar_exact("ADDSS upper lanes", op_addss, 0x3f800000u, 0x40000000u, 0x40400000u);
     check_scalar_exact("SUBSS upper lanes", op_subss, 0x40800000u, 0x3f800000u, 0x40400000u);
     check_scalar_exact("MULSS upper lanes", op_mulss, 0x40000000u, 0x40400000u, 0x40c00000u);

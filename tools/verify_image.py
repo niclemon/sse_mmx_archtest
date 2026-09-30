@@ -8,7 +8,7 @@ Optional --kernel/--source arguments enable the corresponding extra checks.
 from pathlib import Path
 import argparse, struct, re, hashlib
 
-SECTOR=512; TOTAL=2880; KERNEL_SECTORS=256; RESERVED=257; SPF=9; ROOT=275; DATA=289
+SECTOR=512; TOTAL=2880; KERNEL_SECTORS=384; RESERVED=385; SPF=9; ROOT=403; DATA=417
 
 def fat12_get(fat:bytes,c:int)->int:
     off=c+c//2
@@ -59,6 +59,12 @@ def main():
             errs.append('CODE16 descriptor is not documented/configured as KERNEL_BASE-based')
 
         root = a.source.parent.parent
+        header = (root / 'include' / 'archtest.h').read_text()
+        boot_source = (root / 'src' / 'boot.S').read_text()
+        if not re.search(rf'#define\s+KERNEL_SECTORS\s+{KERNEL_SECTORS}u\b', header):
+            errs.append('C kernel reservation disagrees with image layout')
+        if not re.search(rf'\.equ\s+KERNEL_SECTORS,\s*{KERNEL_SECTORS}\b', boot_source):
+            errs.append('boot loader kernel reservation disagrees with image layout')
         log_src = (root / 'src' / 'log.c').read_text(errors='replace')
         baseline_src = (root / 'src' / 'tests' / 'baseline.S').read_text(errors='replace')
         operand_src = (root / 'src' / 'tests' / 'operand_forms.S').read_text(errors='replace')
