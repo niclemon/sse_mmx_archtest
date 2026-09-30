@@ -1,0 +1,41 @@
+# Build products and bootable images (CI publishes the image as an artifact).
+/build/
+/dist/
+/cmake-build-*/
+/out/
+/compile_commands.json
+
+# Compiler, assembler, linker, and debugger output outside the build directory.
+*.o
+*.obj
+*.d
+*.elf
+*.bin
+*.map
+*.exe
+*.pdb
+
+# Local guest logs extracted with the default command or the documented example.
+/RESULTS.TXT
+/run-results.txt
+
+# CLion / JetBrains local project state.
+/.idea/
+*.iml
+
+# Python bytecode and local virtual environments.
+__pycache__/
+*.py[cod]
+/.venv/
+/venv/
+
+# Editor backups and operating-system metadata.
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+[Dd]esktop.ini
+
+# Keep generated assembly in src/tests/ under version control. CI regenerates
+# it and checks for differences. Source, generators, docs, and .github/ stay visible.

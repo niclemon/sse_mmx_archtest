@@ -1,0 +1,29 @@
+name: build-floppy
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib binutils make python3
+      - name: Regenerate opcode tables
+        run: |
+          cp src/tests/generated_ops.S /tmp/generated_ops.S
+          cp src/tests/operand_forms.S /tmp/operand_forms.S
+          python3 tools/gen_cases.py
+          python3 tools/gen_operand_forms.py
+          diff -u /tmp/generated_ops.S src/tests/generated_ops.S
+          diff -u /tmp/operand_forms.S src/tests/operand_forms.S
+      - name: Build and verify
+        run: make verify
+      - name: Coverage inventory
+        run: python3 tools/coverage_report.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sse_mmx_archtest_floppy
+          path: dist/sse_mmx_archtest.img

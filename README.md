@@ -1,0 +1,58 @@
+# MMX/SSE1 Architectural Test
+
+A bootable 1.44 MiB FAT12 floppy image for checking original MMX and Pentium
+III-era SSE1 behavior on legacy BIOS machines, including 86Box/PCBox emulators.
+The freestanding 32-bit C harness controls the run, computes reference results,
+and records outcomes. Assembly handles exact instruction encodings, register
+selection, expected exceptions, and CPU mode transitions.
+
+This is a broad regression suite, not complete ISA conformance coverage. The
+[coverage review](docs/COVERAGE.md) describes the checks and their limits.
+
+## Quick start
+
+With a GNU toolchain targeting 32-bit ELF, GNU make, and Python 3 installed:
+
+```sh
+make verify
+```
+
+Mount `dist/sse_mmx_archtest.img` as a writable 1.44 MB floppy and boot a
+Pentium III-class machine exposing MMX, FXSR, and SSE. The program asks for:
+
+1. A pass count from 1 to 10,000.
+2. `F` for FAIL/SKIP records or `A` for all PASS/FAIL/EXEC/SKIP records.
+3. `Y` to save the captured log as `RESULTS.TXT`, or `N` to discard it.
+
+Tests buffer their log in RAM. Disk access happens after testing: `Y` writes the
+log, while `N` clears the on-disk file size, including any previous saved log.
+Use a copy of the image when you want to preserve earlier results.
+
+Extract a saved log from the image used by the emulator:
+
+```sh
+make extract IMAGE=/path/to/run.img
+```
+
+## Documentation
+
+Each guide owns one topic so instructions and explanations stay consistent:
+
+| Guide | Contents |
+| --- | --- |
+| [Building and running](docs/BUILD.md) | Dependencies, build targets, Docker, image verification, and log extraction. |
+| [Reading the code](docs/READING_THE_CODE.md) | Architecture, source map, test anatomy, bit patterns, assembly, and exception recovery. |
+| [Coverage and limitations](docs/COVERAGE.md) | Case inventory, incomplete checks, and useful additions. |
+| [Adding tests](docs/ADDING_TESTS.md) | Reference rules, exact assembly probes, and validation steps. |
+
+## Interpreting results
+
+- **PASS:** the case's implemented assertion matched.
+- **FAIL:** it did not match; investigate both the target and the reference rule.
+- **EXEC:** execution completed without a semantic result or ordering assertion.
+- **SKIP:** the assertion was not evaluated, for example after a prerequisite
+  failure or for unsupported DAZ behavior.
+
+Read all four counts together. Repeated passes use the same inputs and can expose
+state or emulator recompilation bugs. `make verify` checks the built image and
+selected source/object invariants; emulator or hardware runs test CPU behavior.
