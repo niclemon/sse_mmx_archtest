@@ -427,8 +427,8 @@ void run_edge_mxcsr(void) {
 
     uint32_t mask = get_mxcsr_mask();
     /* FZ flushes tiny results to zero; DAZ treats subnormal inputs as zero.
-     * Only enable bits allowed by the effective mask. DAZ is optional on
-     * these target machines, so lack of support is a SKIP, not a failure. */
+     * Only enable bits allowed by the effective mask. DAZ is a later SSE
+     * extension, so its absence on Pentium III is a SKIP, not a failure. */
     if (mask & MXCSR_FZ) {
         cpu_set_mxcsr(MXCSR_DEFAULT | MXCSR_FZ);
         tf_begin("MXCSR.FZ flushes underflow result");
@@ -447,7 +447,7 @@ void run_edge_mxcsr(void) {
         tf_check_u32(addss_bits(0x00000001u, 0x00000001u), 0u);
     } else {
         tf_begin("MXCSR.DAZ support");
-        tf_skip("not advertised in MXCSR_MASK (normal on some Pentium III CPUs)");
+        tf_skip("not advertised in MXCSR_MASK (DAZ is not part of Pentium III SSE)");
     }
     cpu_set_mxcsr(MXCSR_DEFAULT);
 }

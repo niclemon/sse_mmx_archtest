@@ -12,7 +12,7 @@ CFLAGS := -m32 -std=gnu11 -O2 -ffreestanding -fno-pic -fno-pie \
           -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables \
           -mno-sse -mno-mmx -mno-80387 -Wall -Wextra -Werror -MMD -MP -Iinclude -Iinclude/libc -Ithird_party/fatfs
 ASFLAGS := -m32 -ffreestanding -fno-pic -fno-pie -Iinclude
-LDFLAGS := -m elf_i386 -nostdlib
+LDFLAGS := -m elf_i386 -nostdlib --emit-relocs
 
 C_SRCS := $(wildcard src/*.c) $(wildcard src/tests/*.c)
 S_SRCS := src/entry.S src/faults.S src/tests/baseline.S src/tests/generated_ops.S src/tests/operand_forms.S src/tests/pavgw_probe.S
@@ -68,7 +68,7 @@ dist/$(PROJECT).img: build/boot.bin build/kernel.bin tools/build_image.py
 	$(PYTHON) tools/build_image.py --boot build/boot.bin --kernel build/kernel.bin --output $@
 
 verify: image
-	$(PYTHON) tools/verify_image.py dist/$(PROJECT).img --kernel build/kernel.bin --source src/entry.S
+	$(PYTHON) tools/verify_image.py dist/$(PROJECT).img --kernel build/kernel.bin --source src/entry.S --elf build/kernel.elf
 	$(PYTHON) tools/test_tools.py
 
 # Native CPU checks complement the image's ring-0 fault and boot tests.

@@ -7,6 +7,7 @@ import sys
 import shutil
 import uuid
 import unittest
+from elf_calls import normalize_coff_calls, verify_linked_calls
 
 import build_image as layout
 from coverage_report import CASES_PER_PASS, check_log
@@ -97,6 +98,60 @@ class InventoryTests(unittest.TestCase):
         for log in invalid:
             with self.subTest(log=log), self.assertRaises(ValueError):
                 check_log(log)
+
+
+class CallRelocationTests(unittest.TestCase):
+    """Small ELF fixtures model the actual zero-addend COFF conversion bug."""
+    def setUp(self):
+        fixtures = TOOLS.parent / 'build' / 'tool-tests'
+        fixtures.mkdir(parents=True, exist_ok=True)
+        self.root = fixtures / uuid.uuid4().hex
+        self.root.mkdir()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.path = self.root / 'calls.elf'
+
+    def fixture(self, linked, adjustment=0, relocs=True):
+        # null, text, symtab, strtab, rel.text; one call to external callee.
+        data = bytearray(512)
+        data[:7] = b'\x7fELF\x01\x01\x01'
+        struct.pack_into('<HH', data, 16, 2 if linked else 1, 3)
+        struct.pack_into('<I', data, 32, 52)
+        struct.pack_into('<HH', data, 46, 40, 5)
+        sections = [(0,) * 10,
+                    (0, 1, 6, 0x1000 if linked else 0, 256, 5, 0, 0, 1, 0),
+                    (0, 2, 0, 0, 272, 32, 3, 1, 4, 16),
+                    (0, 3, 0, 0, 304, 8, 0, 0, 1, 0),
+                    (0, 9, 0, 0, 320, 8 if relocs else 0, 2, 1, 4, 8)]
+        for i, section in enumerate(sections):
+            struct.pack_into('<10I', data, 52 + 40 * i, *section)
+        data[256] = 0xe8
+        struct.pack_into('<i', data, 257, 0x2000 - 0x1005 + adjustment if linked else adjustment)
+        struct.pack_into('<IIIBBH', data, 288, 1, 0x2000 if linked else 0,
+                         0, 0x12, 0, 1 if linked else 0)
+        data[304:312] = b'\0callee\0'
+        struct.pack_into('<II', data, 320, 0x1001 if linked else 1, 0x102)
+        self.path.write_bytes(data)
+
+    def test_correct_linked_call(self):
+        self.fixture(True)
+        self.assertEqual(verify_linked_calls(self.path), 1)
+
+    def test_four_byte_overshoot_is_rejected(self):
+        self.fixture(True, 4)
+        with self.assertRaisesRegex(ValueError, 'callee.*00002004.*00002000'):
+            verify_linked_calls(self.path)
+
+    def test_missing_relocations_are_rejected(self):
+        self.fixture(True, relocs=False)
+        with self.assertRaisesRegex(ValueError, 'emit-relocs'):
+            verify_linked_calls(self.path)
+
+    def test_coff_call_normalized_once(self):
+        self.fixture(False)
+        self.assertEqual(normalize_coff_calls(self.path), 1)
+        self.assertEqual(struct.unpack_from('<i', self.path.read_bytes(), 257)[0], -4)
+        with self.assertRaisesRegex(ValueError, 'already normalized'):
+            normalize_coff_calls(self.path)
 
 
 if __name__ == "__main__":

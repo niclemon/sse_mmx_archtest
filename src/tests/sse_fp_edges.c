@@ -296,7 +296,7 @@ void run_edge_sse_fp(void) {
         tf_begin("RSQRTSS negative finite -> QNaN without FP exception");
         reset_mx();
         op_rsqrtss(&a, &NEGONE, &o);
-        if (f_is_nan(o.lane[0]) && ((cpu_get_mxcsr() & 0x3fu) == 0))
+        if (f_is_qnan(o.lane[0]) && ((cpu_get_mxcsr() & 0x3fu) == 0))
             tf_pass();
         else
             tf_fail_text("rsqrt(negative) class/exception behavior");

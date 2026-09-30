@@ -7,6 +7,7 @@ Optional --kernel/--source arguments enable the corresponding extra checks.
 """
 from pathlib import Path
 import argparse, struct, re, hashlib
+from elf_calls import verify_linked_calls
 
 SECTOR=512; TOTAL=2880; KERNEL_SECTORS=384; RESERVED=385; SPF=9; ROOT=403; DATA=417
 
@@ -18,8 +19,13 @@ def fat12_get(fat:bytes,c:int)->int:
 def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('image',type=Path); ap.add_argument('--kernel',type=Path); ap.add_argument('--source',type=Path); a=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('image',type=Path); ap.add_argument('--kernel',type=Path); ap.add_argument('--source',type=Path); ap.add_argument('--elf',type=Path); a=ap.parse_args()
     b=a.image.read_bytes(); errs=[]
+    if a.elf:
+        try:
+            call_count = verify_linked_calls(a.elf)
+        except ValueError as error:
+            errs.append(str(error))
     if len(b)!=TOTAL*SECTOR: errs.append(f'image size {len(b)} != {TOTAL*SECTOR}')
     if b[510:512]!=b'\x55\xaa': errs.append('bad boot signature')
     if b[54:62]!=b'FAT12   ': errs.append('BPB filesystem type is not FAT12')
@@ -146,6 +152,7 @@ def main():
         for e in errs: print('  -',e)
         raise SystemExit(1)
     print('verification OK')
+    if a.elf: print(f'  linked calls: {call_count} direct calls/jumps land at symbol entry points')
     print(f'  image: {len(b)} bytes; sha256={sha(a.image)}')
     if a.kernel: print(f'  kernel: {a.kernel.stat().st_size} bytes; embedded copy matches')
     print(f'  FAT12: reserved={RESERVED}, root={ROOT}, data={DATA}, RESULTS capacity={(TOTAL-DATA)*SECTOR} bytes')

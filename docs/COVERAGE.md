@@ -33,7 +33,7 @@ not measure conformance, instruction coverage, or the numeric input space.
 | Tiny and approximate results | Exact normal/subnormal transitions reject spurious underflow/precision flags. RCPPS/RSQRTPS use an integer relative-error bound for references 1/3, 1/5, 1/7 and 1/10, in every rounding mode. |
 | MXCSR | Validate the raw mask's reserved bits and the effective mask's baseline bits, while retaining the valid zero-mask fallback. Each reserved high bit is tested independently through LDMXCSR and FXRSTOR. LDMXCSR must preserve the old state on #GP. |
 | Faults | Misaligned MOVAPS loads/stores, ADDPS and MOVNTPS check vector, zero error code, exact saved EIP, unchanged XMM state and unchanged guarded memory. These use assembler-local fault/resume labels. |
-| Saved state | All eight MMX payloads round-trip through FXSAVE/FXRSTOR. x87 checks cover ten-byte payloads, nondefault control, rotated TOP, full/partial tags and logical-versus-physical register ordering. EMMS tag clearing, save-area guards and software-owned bytes 464..511 are checked. |
+| Saved state | All eight MMX payloads round-trip through FXSAVE/FXRSTOR. x87 checks cover ten-byte payloads, nondefault control, rotated TOP, full/partial tags and logical-versus-physical register ordering. EMMS tag clearing, save-area guards and preservation of live MXCSR across FXSAVE are checked. Reserved save-area bytes are excluded. |
 | Existing FP checks | Invalid arithmetic now requires quiet NaNs. Result, upper-lane and exact-status checks are separated so an extra exception flag cannot hide behind a correct result. |
 
 The integer matrix repeats its seed each pass. It expands the tested input set
@@ -68,3 +68,6 @@ For the architectural rules, see Intel's [instruction reference, Volume 2A](http
 (CMP, conversions and saved state) and [Volume 1, section 11.6.6](https://cdrdv2-public.intel.com/671436/253665-sdm-vol-1.pdf)
 (MXCSR mask handling). The reference comments identify the assumptions that
 matter to each probe.
+
+See the [Pentium III expectation audit](ORACLE_AUDIT.md) for the historical
+manual review, changes, measured QEMU limitations and validation results.

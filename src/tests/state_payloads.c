@@ -40,6 +40,7 @@ static void mmx_round_trip(void) {
     cpu_set_mxcsr(MXCSR_DEFAULT | MXCSR_RC_UP | MXCSR_PE);
     mm_load(mm_seed);
     cpu_fxsave(area);
+    uint32_t saved_mx = cpu_get_mxcsr();
     mm_store(mm_out); /* Saving must leave the live register file intact. */
     mm_load(mm_other);
     cpu_set_mxcsr(MXCSR_DEFAULT);
@@ -70,15 +71,17 @@ static void mmx_round_trip(void) {
     tf_check_u32(mx, MXCSR_DEFAULT | MXCSR_RC_UP | MXCSR_PE);
     tf_begin("EMMS empties every x87 tag after MMX restore");
     tf_check_u32(empty_tag, 0);
-    uint8_t sentinel[48];
+    uint8_t sentinel[16];
     for (unsigned i = 0; i < sizeof(sentinel); ++i)
         sentinel[i] = 0x5a;
     tf_begin("FXSAVE leading guard");
     tf_check_bytes(guarded, sentinel, 16);
     tf_begin("FXSAVE trailing guard");
     tf_check_bytes(guarded + 528, sentinel, 16);
-    tf_begin("FXSAVE leaves software-owned bytes 464..511 unchanged");
-    tf_check_bytes(area + 464, sentinel, 48);
+    /* The 1999 Pentium III reference labels the save-area tail reserved.
+     * Do not require the later software-owned-tail guarantee here. */
+    tf_begin("FXSAVE leaves live MXCSR unchanged");
+    tf_check_u32(saved_mx, MXCSR_DEFAULT | MXCSR_RC_UP | MXCSR_PE);
 }
 
 static void x87_round_trip(void) {
